@@ -1,11 +1,12 @@
-# Apple TV Remote for HarmonyOS · 原生鸿蒙 PoC
+# Apple TV Remote for HarmonyOS · 原生鸿蒙遥控器
 
 这是独立的 **ArkUI / ArkTS + C++** 工程源码。目标是 HarmonyOS 7.0 手机上的“发现 → 四位 PIN 配对 → 基础遥控”。它不是 APK 转换，也不是可安装的 HAP 成品。
 
-**当前交付边界：** 云端没有 DevEco Studio、HarmonyOS SDK、Hvigor、OHPM 或 HDC；因此鸿蒙编译、HUKS 真机行为、mDNS 与真实 Apple TV 互操作均未验证。主机 C++ / Node-API 测试的实际结果见 [验证记录](docs/VALIDATION.zh-CN.md)，不代表 ArkTS 编译成功。没有创建签名凭据、发布版本或修改 Android 构建流程。
+**验证状态：** 用户于 2026-10-13 反馈，当日上午版本（`285a7005`）已完成 TV 调试；未提供具体机型、构建版本或逐项验收记录。本次在该源码基线上适配 Android UI。云端没有 DevEco Studio、HarmonyOS SDK、Hvigor、OHPM 或 HDC，因此本次 UI 修改尚未完成鸿蒙编译与真机视觉/交互复验。主机 C++ / Node-API 测试的实际结果见 [验证记录](docs/VALIDATION.zh-CN.md)，不代表 ArkTS 编译成功。没有创建签名凭据、发布版本或修改 Android 构建流程。
 
 ## 范围
 
+- Android 同款深色/薄荷绿视觉、顶部设备选择、方向键和底部操作区；窄屏/横屏/大字适配。
 - ArkUI 设备列表；mDNS `_companion-link._tcp`，解析实际 IP 和端口；手动 IP + 端口后备入口。
 - HAP SRP-3072 / SHA-512 配对、服务端 proof、Ed25519 身份、X25519 Pair Verify、HKDF-SHA512、ChaCha20-Poly1305。
 - OPACK / TLV8、TCP 流分帧、独立收发 nonce、XID 匹配、整次请求期限、取消与失败关闭。
@@ -16,6 +17,8 @@
 不含触控、长按、自动键盘/RTI、Siri、音量/CEC、后台常驻、AppGallery 发布。按钮成功表示协议请求得到了成功回复，不表示已读取电视画面确认。
 
 ## 入口
+
+- [本次 Android UI 适配与验收](docs/UI-ADAPTATION.zh-CN.md)
 
 - [中文部署与调试](docs/DEPLOYMENT.zh-CN.md)
 - [架构与安全边界](docs/ARCHITECTURE.zh-CN.md)

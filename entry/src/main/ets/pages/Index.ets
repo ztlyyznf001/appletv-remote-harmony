@@ -1,134 +1,402 @@
+import { common } from '@kit.AbilityKit';
 import { Device } from '../model/Device';
 import { RemoteState } from '../model/RemoteState';
 import { remoteController } from '../model/RemoteController';
+import { RemoteLayout } from '../model/RemoteLayout';
+import { RemoteKey } from '../components/RemoteKey';
 
 @Entry
 @Component
 struct Index {
   @State state: RemoteState = remoteController.state;
+  @State panel: string = '';
   @State manualAddress: string = '';
   @State manualPort: string = '';
-  @State showManual: boolean = false;
-  @State showForget: boolean = false;
   @State forgetTargetId: string = '';
+  @State forgetTargetName: string = '';
+  @State windowWidth: number = 360;
+  @State windowHeight: number = 640;
+  @State fontScale: number = 1;
+
+  aboutToAppear(): void {
+    this.fontScale = (this.getUIContext().getHostContext() as common.UIAbilityContext | undefined)?.config.fontSizeScale ?? 1;
+  }
+
+  private layout(): RemoteLayout {
+    return new RemoteLayout(this.windowWidth, this.windowHeight, this.fontScale);
+  }
+
+  private modalOpen(): boolean {
+    return this.state.foreground && (this.panel.length > 0 || this.state.needsPin);
+  }
+
+  private controlsEnabled(): boolean {
+    return this.state.foreground && this.state.connected && !this.state.busy && !this.state.buttonInFlight;
+  }
+
+  // A command in flight locks input without flashing every key to a disconnected palette.
+  private controlsAvailable(): boolean {
+    return this.state.foreground && this.state.connected && !this.state.busy;
+  }
+
+  private canSelect(): boolean {
+    return this.state.foreground && this.state.ready && !this.state.busy && !this.state.buttonInFlight;
+  }
+
+  private sideLayout(): boolean {
+    return this.layout().side;
+  }
+
+  private contentWidth(): number {
+    return this.layout().contentWidth;
+  }
+
+  private padSize(): number {
+    return this.layout().padSize;
+  }
+
+  private closePanel(): void {
+    this.panel = '';
+    this.forgetTargetId = '';
+    this.forgetTargetName = '';
+    this.manualAddress = '';
+    this.manualPort = '';
+  }
+
+  onBackPress(): boolean {
+    if (this.state.needsPin) {
+      remoteController.disconnect();
+      this.closePanel();
+      return true;
+    }
+    if (this.panel.length > 0) {
+      this.closePanel();
+      return true;
+    }
+    return false;
+  }
+
+  private openManual(): void {
+    this.manualAddress = this.state.selected?.host ?? '';
+    this.manualPort = this.state.selected?.port.toString() ?? '';
+    this.panel = 'manual';
+  }
+
+  private selectDevice(device: Device): void {
+    if (!this.canSelect()) return;
+    remoteController.select(device);
+    this.closePanel();
+    remoteController.connectSelected();
+  }
 
   @Builder
-  key(label: string, code: number, width: number) {
-    Button(label)
-      .width(width).height(58).fontSize(17)
-      .backgroundColor('#294D66').fontColor('#FFFFFF')
-      .enabled(this.state.foreground && this.state.connected && !this.state.busy && !this.state.buttonInFlight)
-      .onClick(() => { remoteController.press(code); })
+  header() {
+    Row({ space: 8 }) {
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 10 }) {
+          Image($r('app.media.remote_device')).width(24).height(24)
+          Column({ space: 4 }) {
+            Text(this.state.selected?.name ?? '选择 Apple TV')
+              .fontSize(16).fontWeight(FontWeight.Medium).fontColor('#E6EEEA')
+              .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+            Text(this.state.connected ? '已连接 · 切换设备' : (this.state.busy ? '连接中…' : '选择或连接设备'))
+              .fontSize(12).fontColor('#ABBDB7').width('100%')
+          }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        }.padding({ left: 14, right: 14, top: 10, bottom: 10 }).constraintSize({ minHeight: 68 })
+      }.layoutWeight(1).borderRadius(20).backgroundColor('#243133')
+        .enabled(this.canSelect()).accessibilityText('选择或切换 Apple TV')
+        .onClick(() => { this.panel = 'devices'; })
+      Button('连接', { type: ButtonType.Normal }).fontSize(14).fontColor('#B8E4CA')
+        .backgroundColor(Color.Transparent).height(48).padding({ left: 12, right: 12 })
+        .onClick(() => { this.panel = 'options'; })
+    }.width('100%')
+  }
+
+  @Builder
+  modeLabel() {
+    Row() {
+      Text('方向键').fontSize(14).fontWeight(FontWeight.Medium).fontColor('#D6F6E2')
+        .padding({ left: 24, right: 24, top: 14, bottom: 14 })
+        .backgroundColor('#284C3C').borderRadius(14)
+      Blank()
+      Text(this.state.connected ? '轻点控制电视' : '连接后即可使用')
+        .fontSize(12).fontColor('#ABBDB7').maxLines(2).textAlign(TextAlign.End)
+    }.width('100%')
+  }
+
+  @Builder
+  directionKey(label: string, icon: Resource, code: number, primary: boolean) {
+    RemoteKey({ label: label, icon: icon, primary: primary,
+      enabled: this.controlsEnabled(), available: this.controlsAvailable(),
+      keyWidth: (this.padSize() - 36) / 3, keyHeight: (this.padSize() - 36) / 3,
+      onPress: () => { remoteController.press(code); } })
+  }
+
+  @Builder
+  directionPad() {
+    if (this.padSize() < 180) {
+      // Keep useful hit targets in very narrow split-screen windows.
+      Column({ space: 8 }) {
+        this.wideKey('向上', 1)
+        this.wideKey('向左', 3)
+        this.wideKey('确认', 6)
+        this.wideKey('向右', 4)
+        this.wideKey('向下', 2)
+      }.width('100%')
+    } else {
+      Column({ space: 6 }) {
+        Row() {
+          this.directionKey('向上', $r('app.media.remote_up'), 1, false)
+        }.width('100%').justifyContent(FlexAlign.Center)
+        Row({ space: 6 }) {
+          this.directionKey('向左', $r('app.media.remote_left'), 3, false)
+          this.directionKey('确认', $r('app.media.remote_select'), 6, true)
+          this.directionKey('向右', $r('app.media.remote_right'), 4, false)
+        }
+        Row() {
+          this.directionKey('向下', $r('app.media.remote_down'), 2, false)
+        }.width('100%').justifyContent(FlexAlign.Center)
+      }.padding(12).width(this.padSize()).height(this.padSize())
+        .backgroundColor('#243133').borderRadius(32)
+    }
+  }
+
+  @Builder
+  wideKey(label: string, code: number) {
+    Button(label, { type: ButtonType.Normal }).width('100%').constraintSize({ minHeight: 56 })
+      .backgroundColor('#243133').fontColor('#E6EEEA').borderRadius(18)
+      .enabled(this.controlsEnabled()).onClick(() => { remoteController.press(code); })
+  }
+
+  @Builder
+  actionKey(label: string, icon: Resource, code: number) {
+    RemoteKey({ label: label, icon: icon, showLabel: true,
+      enabled: this.controlsEnabled(), available: this.controlsAvailable(),
+      keyWidth: this.layout().actionWidth,
+      keyHeight: Math.max(80, 46 + 30 * this.fontScale), onPress: () => { remoteController.press(code); } })
+  }
+
+  @Builder
+  actions() {
+    if (this.sideLayout()) {
+      Column({ space: 8 }) {
+        this.actionKey('返回', $r('app.media.remote_left'), 5)
+        this.actionKey('主屏幕', $r('app.media.remote_home'), 7)
+        this.actionKey('播放 / 暂停', $r('app.media.remote_play'), 14)
+      }.width(120)
+    } else {
+      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+        this.actionKey('返回', $r('app.media.remote_left'), 5)
+        this.actionKey('主屏幕', $r('app.media.remote_home'), 7)
+        this.actionKey('播放 / 暂停', $r('app.media.remote_play'), 14)
+      }.width('100%')
+    }
+  }
+
+  @Builder
+  connectionStatus() {
+    Text(this.state.status).fontSize(12).fontColor(this.state.connected ? '#B8E4CA' : '#ABBDB7')
+      .width('100%').textAlign(TextAlign.Center).padding({ top: 4, bottom: 4 })
+  }
+
+  @Builder
+  mainContent() {
+    Column({ space: 12 }) {
+      if (this.sideLayout()) {
+        this.header()
+        Row({ space: 16 }) {
+          Scroll() {
+            Column({ space: 12 }) {
+              this.modeLabel()
+              this.directionPad()
+              this.connectionStatus()
+            }.width('100%')
+          }.layoutWeight(1).height('100%').align(Alignment.Top)
+          Scroll() { this.actions() }.width(120).height('100%').align(Alignment.Bottom)
+        }.layoutWeight(1).width('100%')
+      } else if (this.layout().dock) {
+        this.header()
+        this.modeLabel()
+        Scroll() {
+          Column({ space: 12 }) {
+            this.directionPad()
+            this.connectionStatus()
+          }.width('100%')
+        }.layoutWeight(1).width('100%').align(Alignment.Center)
+        this.actions()
+      } else {
+        Scroll() {
+          Column({ space: 12 }) {
+            this.header()
+            this.modeLabel()
+            this.directionPad()
+            this.connectionStatus()
+            this.actions()
+          }.width('100%')
+        }.layoutWeight(1).width('100%')
+      }
+    }.width(this.contentWidth()).height('100%').padding({ top: 12, bottom: 12 })
+      .enabled(!this.modalOpen())
+      .accessibilityLevel(this.modalOpen() ? 'no-hide-descendants' : 'auto')
+  }
+
+  @Builder
+  panelButton(label: string, action: () => void, enabled: boolean, primary: boolean) {
+    Button(label, { type: ButtonType.Normal }).width('100%').constraintSize({ minHeight: 48 })
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 }).borderRadius(16).fontSize(15)
+      .fontColor(primary ? '#123529' : '#B8E4CA')
+      .backgroundColor(primary ? '#B8E4CA' : '#243133').enabled(enabled).onClick(action)
+  }
+
+  @Builder
+  panelText(value: string) {
+    Text(value).fontSize(14).fontColor('#ABBDB7').width('100%')
+  }
+
+  @Builder
+  optionsPanel() {
+    this.panelText(this.state.status)
+    this.panelText(`${this.state.devices.length} 台附近设备 · ${this.state.discoveryText}`)
+    this.panelText('与 Apple TV 连接同一 Wi-Fi。打开应用会尝试恢复已配对设备；主动断开后不会自动重连。')
+    this.panelButton('选择或切换设备', () => { this.panel = 'devices'; }, this.canSelect(), false)
+    this.panelButton(this.state.connected ? '断开连接' : (this.state.busy ? '取消连接' : '连接 / 配对'), () => {
+      this.closePanel();
+      if (this.state.connected || this.state.busy) remoteController.disconnect();
+      else if (this.state.selected === undefined) this.panel = 'devices';
+      else remoteController.connectSelected();
+    }, this.state.foreground && this.state.ready, true)
+    if (this.state.canForget) {
+      this.panelButton('移除已保存配对', () => {
+        this.forgetTargetId = this.state.selected?.id ?? '';
+        this.forgetTargetName = this.state.selected?.name ?? 'Apple TV';
+        this.panel = 'forget';
+      }, this.canSelect(), false)
+    }
+    this.panelButton('关闭', () => { this.closePanel(); }, true, false)
+  }
+
+  @Builder
+  deviceRow(device: Device) {
+    Button({ type: ButtonType.Normal }) {
+      Column({ space: 4 }) {
+        Text(device.name).fontSize(16).fontColor('#E6EEEA').width('100%').maxLines(2)
+        Text(`${device.host}:${device.port}`).fontSize(12).fontColor('#ABBDB7').width('100%')
+      }.padding(14).width('100%').alignItems(HorizontalAlign.Start)
+    }.width('100%').borderRadius(16)
+      .backgroundColor(this.state.selected?.id === device.id ? '#284C3C' : '#243133')
+      .enabled(this.canSelect()).onClick(() => { this.selectDevice(device); })
+  }
+
+  @Builder
+  devicesPanel() {
+    this.panelText(this.state.discoveryText)
+    this.panelText('Companion 广播也可能来自其他 Apple 设备，请核对名称，并在电视上核对配对码。')
+    if (this.state.selected !== undefined) {
+      this.panelText('当前设备')
+      this.deviceRow(this.state.selected as Device)
+    }
+    if (this.state.devices.length === 0) {
+      this.panelText('暂未发现附近设备。请确认电视已唤醒且处于同一网络，或手动填写地址和端口。')
+    }
+    ForEach(this.state.devices, (device: Device) => {
+      if (device.id !== this.state.selected?.id) {
+        this.deviceRow(device)
+      }
+    }, (device: Device) => device.id)
+    this.panelButton('手动填写地址和端口', () => { this.openManual(); }, this.canSelect(), false)
+    this.panelButton('重新发现', () => { remoteController.refreshDiscovery(); }, this.state.ready && this.state.foreground, false)
+    this.panelButton('关闭', () => { this.closePanel(); }, true, false)
+  }
+
+  @Builder
+  manualPanel() {
+    this.panelText('填写已发现的 Apple TV 地址和实际 Companion 端口。端口可能在电视重启后变化，没有固定默认值。')
+    TextInput({ text: this.manualAddress, placeholder: '数字 IPv4 / IPv6 地址' })
+      .type(InputType.Normal).maxLength(64).height(52).fontColor('#E6EEEA')
+      .placeholderColor('#ABBDB7').backgroundColor('#243133')
+      .enabled(this.canSelect()).onChange((value: string) => { this.manualAddress = value; })
+    TextInput({ text: this.manualPort, placeholder: 'Companion 端口（必填）' })
+      .type(InputType.Number).maxLength(5).height(52).fontColor('#E6EEEA')
+      .placeholderColor('#ABBDB7').backgroundColor('#243133')
+      .enabled(this.canSelect()).onChange((value: string) => { this.manualPort = value; })
+    this.panelText(this.state.status)
+    this.panelButton('连接 / 配对', () => {
+      if (remoteController.selectManual(this.manualAddress, this.manualPort)) {
+        this.closePanel();
+        remoteController.connectSelected();
+      }
+    }, this.canSelect() && this.manualAddress.length > 0 && this.manualPort.length > 0, true)
+    this.panelButton('取消', () => { this.closePanel(); }, true, false)
+  }
+
+  @Builder
+  pinPanel() {
+    this.panelText('输入电视屏幕上显示的 4 位数字。配对码仅用于本次验证。')
+    TextInput({ text: this.state.pin, placeholder: '4 位配对码' })
+      .type(InputType.NUMBER_PASSWORD).enableAutoFill(false).maxLength(4).height(56)
+      .fontSize(22).fontColor('#E6EEEA').placeholderColor('#ABBDB7').backgroundColor('#243133')
+      .enabled(!this.state.busy).onChange((value: string) => { this.state.pin = value.replace(/[^0-9]/g, '').slice(0, 4); })
+    this.panelText(this.state.status)
+    this.panelButton(this.state.busy ? '验证中…' : '配对', () => { remoteController.finishPairing(); },
+      !this.state.busy && this.state.pin.length === 4, true)
+    this.panelButton('取消配对', () => { remoteController.disconnect(); this.closePanel(); }, true, false)
+  }
+
+  @Builder
+  forgetPanel() {
+    this.panelText(`将移除「${this.forgetTargetName}」在本机保存的配对身份。下次连接需要重新输入电视上的配对码。电视端授权记录不会自动删除。`)
+    this.panelButton('移除配对', () => {
+      const target: string = this.forgetTargetId;
+      this.closePanel();
+      remoteController.forgetSelected(target);
+    }, this.canSelect() && this.state.selected?.id === this.forgetTargetId, true)
+    this.panelButton('取消', () => { this.closePanel(); }, true, false)
+  }
+
+  private panelTitle(): string {
+    if (this.state.needsPin) return '与 Apple TV 配对';
+    if (this.panel === 'devices') return '附近的设备';
+    if (this.panel === 'manual') return '手动连接 Apple TV';
+    if (this.panel === 'forget') return '移除已保存配对？';
+    return '连接与设备';
+  }
+
+  @Builder
+  dialog() {
+    Column() {
+      Scroll() {
+        Column({ space: 16 }) {
+          Text(this.panelTitle()).fontSize(22).fontWeight(FontWeight.Medium).fontColor('#E6EEEA').width('100%')
+          if (this.state.needsPin) {
+            this.pinPanel()
+          } else if (this.panel === 'devices') {
+            this.devicesPanel()
+          } else if (this.panel === 'manual') {
+            this.manualPanel()
+          } else if (this.panel === 'forget') {
+            this.forgetPanel()
+          } else {
+            this.optionsPanel()
+          }
+        }.width('100%').padding(24).backgroundColor('#182224').borderRadius(28)
+      }.width('100%').constraintSize({ maxHeight: Math.max(120, this.windowHeight - 32) })
+        .scrollBar(BarState.Auto)
+    }.width(Math.max(0, Math.min(560, this.windowWidth - 32)))
   }
 
   build() {
-    Scroll() {
-      Column({ space: 16 }) {
-        Column({ space: 6 }) {
-          Text('Apple TV 遥控').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#172431')
-          Text('HarmonyOS 原生验证版 · Companion').fontSize(13).fontColor('#546674')
-          Text(this.state.selected?.name ?? '尚未选择设备').fontSize(18).fontWeight(FontWeight.Medium).maxLines(2)
-          Text(this.state.status).fontSize(14).fontColor(this.state.connected ? '#17654E' : '#445565')
-            .width('100%').textAlign(TextAlign.Center)
-        }.width('100%')
-
-        Column({ space: 10 }) {
-          Text('附近设备').fontSize(18).fontWeight(FontWeight.Bold).alignSelf(ItemAlign.Start)
-          Text(this.state.discoveryText).fontSize(13).fontColor('#546674').width('100%')
-          Text('广播可能来自其他 Apple 设备。名称和地址不能证明身份，请在电视上核对 PIN。')
-            .fontSize(12).fontColor('#546674').width('100%')
-          ForEach(this.state.devices, (device: Device) => {
-            Button() {
-              Column({ space: 3 }) {
-                Text(device.name).fontSize(16).fontColor('#172431').width('100%').maxLines(2)
-                Text(`${device.host}:${device.port}`).fontSize(12).fontColor('#546674').width('100%')
-              }.padding(12).width('100%')
-            }.width('100%').borderRadius(12).backgroundColor(this.state.selected?.id === device.id ? '#D7E8F3' : '#EDF2F5')
-              .enabled(this.state.ready && !this.state.busy)
-              .onClick(() => { this.showForget = false; remoteController.select(device); })
-          }, (device: Device) => device.id)
-          Row({ space: 10 }) {
-            Button('重新发现').onClick(() => { remoteController.refreshDiscovery(); }).enabled(this.state.ready)
-            Button(this.showManual ? '收起地址' : '手动地址')
-              .onClick(() => { this.showManual = !this.showManual; }).enabled(!this.state.busy)
-          }
-          if (this.showManual) {
-            Column({ space: 8 }) {
-              TextInput({ text: this.manualAddress, placeholder: '数字 IPv4 / IPv6 地址' })
-                .type(InputType.Normal).maxLength(64)
-                .onChange((value: string) => { this.manualAddress = value; })
-              TextInput({ text: this.manualPort, placeholder: '实际 Companion TCP 端口（必填）' })
-                .type(InputType.Number).maxLength(5)
-                .onChange((value: string) => { this.manualPort = value; })
-              Text('从已解析的广播或可信网络工具确认端口；它可能变化，没有固定默认值。')
-                .fontSize(12).fontColor('#546674')
-              Button('选择此地址').width('100%').enabled(this.state.ready && !this.state.busy)
-                .onClick(() => {
-                  this.showForget = false;
-                  if (remoteController.selectManual(this.manualAddress, this.manualPort)) this.showManual = false;
-                })
-            }.padding(12).backgroundColor('#EDF2F5').borderRadius(12)
-          }
-        }.width('100%').padding(16).backgroundColor('#FFFFFF').borderRadius(20)
-
-        if (this.state.needsPin) {
-          Column({ space: 10 }) {
-            Text('输入电视上的 4 位 PIN').fontSize(18).fontWeight(FontWeight.Bold)
-            TextInput({ text: this.state.pin, placeholder: '4 位 PIN' })
-              .type(InputType.NUMBER_PASSWORD).enableAutoFill(false).maxLength(4).enabled(!this.state.busy)
-              .onChange((value: string) => { this.state.pin = value.replace(/[^0-9]/g, '').slice(0, 4); })
-            Button('验证并加密保存').enabled(!this.state.busy && this.state.pin.length === 4)
-              .onClick(() => { remoteController.finishPairing(); })
-            Button('取消配对').onClick(() => { remoteController.disconnect(); })
-          }.width('100%').padding(16).backgroundColor('#FFFFFF').borderRadius(20)
-        } else {
-          Row({ space: 12 }) {
-            Button(this.state.busy ? '正在连接…' : '连接 / 配对')
-              .enabled(this.state.ready && this.state.selected !== undefined && !this.state.connected && !this.state.busy)
-              .onClick(() => { remoteController.connectSelected(); })
-            Button('断开').enabled(this.state.ready)
-              .onClick(() => { remoteController.disconnect(); })
-          }
-        }
-
-        Column({ space: 10 }) {
-          this.key('上', 1, 80)
-          Row({ space: 12 }) {
-            this.key('左', 3, 80)
-            this.key('确认', 6, 80)
-            this.key('右', 4, 80)
-          }
-          this.key('下', 2, 80)
-          Row({ space: 10 }) {
-            this.key('返回', 5, 80)
-            this.key('主屏幕', 7, 80)
-            this.key('播放/暂停', 14, 96)
-          }.margin({ top: 8 })
-        }.width('100%').padding({ top: 18, bottom: 18 }).backgroundColor('#FFFFFF').borderRadius(20)
-
-        if (this.state.canForget) {
-          Button('忘记此设备').fontColor('#A63335').backgroundColor('#F5E8E9').enabled(!this.state.busy)
-            .onClick(() => { this.forgetTargetId = this.state.selected?.id ?? ''; this.showForget = true; })
-        }
-        if (this.showForget) {
-          Column({ space: 10 }) {
-            Text('确认移除本机保存的配对身份？下次需要重新输入电视 PIN。电视端授权记录不会自动删除。')
-              .fontSize(14).fontColor('#172431')
-            Row({ space: 12 }) {
-              Button('取消').onClick(() => { this.showForget = false; })
-              Button('确认忘记').backgroundColor('#A63335').enabled(!this.state.busy)
-                .onClick(() => {
-                  this.showForget = false;
-                  remoteController.forgetSelected(this.forgetTargetId);
-                  this.forgetTargetId = '';
-                })
-            }
-          }.width('100%').padding(16).backgroundColor('#FFFFFF').borderRadius(16)
-        }
-        Text('返回后台会关闭网络会话。成功连接后，下次进入前台最多尝试恢复两次；手动断开会关闭自动恢复。')
-          .fontSize(12).fontColor('#546674').width('100%')
-        Text('开发验证版；尚需真实 HarmonyOS 设备与 Apple TV 联调。').fontSize(12).fontColor('#546674')
-      }.width('100%').constraintSize({ maxWidth: 520 }).padding(20)
-    }.width('100%').height('100%').backgroundColor('#F2F5F7')
+    Stack({ alignContent: Alignment.Center }) {
+      this.mainContent()
+      if (this.modalOpen()) {
+        // A full overlay blocks hit testing on the remote; outside taps deliberately do not dismiss a PIN.
+        Column().width('100%').height('100%').backgroundColor('#B3000000').onClick(() => {})
+        this.dialog()
+      }
+    }.width('100%').height('100%').backgroundColor('#101719')
+      .onAreaChange((oldArea: Area, newArea: Area) => {
+        this.windowWidth = Number(newArea.width);
+        this.windowHeight = Number(newArea.height);
+        this.fontScale = (this.getUIContext().getHostContext() as common.UIAbilityContext | undefined)?.config.fontSizeScale ?? 1;
+      })
   }
 }

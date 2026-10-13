@@ -102,3 +102,7 @@ NODE_HEADERS="/实际/node-v24.19.0/src" ./scripts/test-node-bridge.sh
 用户选择独立公开仓库 `appletv-remote-harmony` 后，将 community 提交 `805b26780e0508ae636af28537f1f0598d08a862` 的 `harmony/` 内容移至仓库根目录，并更新当前运行路径、根 README 和 MIT LICENSE。上方 community PR 记录保留为历史来源；不合并该 PR。
 
 原始 `validation/` 日志中的 `harmony/` 路径属于历史执行目录。当前重现命令使用上方的新路径。本仓库未配置 GitHub Actions CI，Android CI 的成功结果不作为鸿蒙验收。SDK、HAP、签名与真机状态仍为未验证。
+
+## 2026-10-13 Android UI 适配
+
+用户反馈上午的独立仓库基线 `285a7005` 已完成 TV 调试。本次 UI 更改的主机回归、17 项页面/布局检查以及尚未完成的 SDK 编译/真机复验，见 [UI 适配与验收](UI-ADAPTATION.zh-CN.md)。历史记录中的未验证项描述其当时执行边界，不覆盖或否定用户后续调试反馈。
