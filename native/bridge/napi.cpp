@@ -31,13 +31,15 @@ void erase(std::string& value) noexcept {
     value.clear();
 }
 struct State;
-enum class Operation { Begin, Finish, Connect, Press, Disconnect };
+enum class Operation { Begin, Finish, Connect, Press, Touch, HoldSelect, Disconnect };
 struct Job {
     Operation operation;
     Session::Epoch epoch = 0;
     std::string host, pin, error, code;
     std::uint16_t port = 0;
     std::uint32_t button = 0;
+    std::uint32_t x = 0, y = 0, phase = 0;
+    bool held = false;
     Bytes credentials, result;
     napi_deferred deferred = nullptr;
     napi_async_work work = nullptr;
@@ -57,7 +59,7 @@ std::string error_code(const std::string& text) {
     if (text.find("identity changed") != std::string::npos) return "IDENTITY_CHANGED";
     if (text.find("timed out") != std::string::npos) return "TIMEOUT";
     if (text.find("Connect to Apple TV first") != std::string::npos || text.find("Start pairing first") != std::string::npos) return "NOT_CONNECTED";
-    if (text.find("saved credentials") != std::string::npos || text.find("address") != std::string::npos || text.find("IPv6 scope") != std::string::npos || text.find("four-digit PIN") != std::string::npos || text.find("Unsupported remote button") != std::string::npos) return "INVALID_INPUT";
+    if (text.find("saved credentials") != std::string::npos || text.find("address") != std::string::npos || text.find("IPv6 scope") != std::string::npos || text.find("four-digit PIN") != std::string::npos || text.find("Unsupported remote button") != std::string::npos || text.find("Invalid touch input") != std::string::npos || text.find("Invalid touch sequence") != std::string::npos || text.find("Select is already held") != std::string::npos) return "INVALID_INPUT";
     if (text.find("identity") != std::string::npos || text.find("signature") != std::string::npos || text.find("authentication") != std::string::npos || text.find("pairing") != std::string::npos || text.find("proof") != std::string::npos || text.find("AEAD") != std::string::npos) return "AUTH_FAILED";
     if (text.find("disconnected") != std::string::npos || text.find("connect to Apple TV") != std::string::npos || text.find("socket") != std::string::npos || text.find("send failed") != std::string::npos) return "DISCONNECTED";
     return "PROTOCOL_ERROR";
@@ -65,7 +67,7 @@ std::string error_code(const std::string& text) {
 // Only locally authored messages cross into JavaScript; peer strings are never exposed.
 const char* safe_message(const std::string& code) {
     if (code == "CANCELLED") return "Operation cancelled";
-    if (code == "INVALID_INPUT") return "Invalid address, port, PIN, credentials, or button";
+    if (code == "INVALID_INPUT") return "Invalid address, port, PIN, credentials, button, or touch input";
     if (code == "AUTH_FAILED") return "Apple TV authentication failed; pair again if needed";
     if (code == "IDENTITY_CHANGED") return "Apple TV identity changed; pair again";
     if (code == "TIMEOUT") return "Apple TV response timed out";
@@ -97,6 +99,8 @@ void execute(napi_env, void* data) noexcept {
                 session.connect(job.host, job.port, credentials, job.epoch); break;
             }
             case Operation::Press: session.press(job.button, job.epoch); break;
+            case Operation::Touch: session.touch(job.x, job.y, job.phase, job.epoch); break;
+            case Operation::HoldSelect: session.hold_select(job.held, job.epoch); break;
             case Operation::Disconnect: session.disconnect(job.epoch); break;
         }
     } catch (const std::exception& error) { job.code = error_code(error.what()); }
@@ -153,12 +157,18 @@ std::string string_arg(napi_env env, napi_value value, std::size_t max) {
     if (actual != size || result.find('\0') != std::string::npos) { erase(result); throw std::invalid_argument("string content"); }
     return result;
 }
-std::uint32_t integer_arg(napi_env env, napi_value value, std::uint32_t max) {
+std::uint32_t integer_arg(napi_env env, napi_value value, std::uint32_t max, std::uint32_t min = 1) {
     napi_valuetype type; checked(napi_typeof(env, value, &type));
     if (type != napi_number) throw std::invalid_argument("number");
     double number; checked(napi_get_value_double(env, value, &number));
-    if (!std::isfinite(number) || number < 1 || number > max || std::floor(number) != number) throw std::invalid_argument("integer");
+    if (!std::isfinite(number) || number < min || number > max || std::floor(number) != number) throw std::invalid_argument("integer");
     return static_cast<std::uint32_t>(number);
+}
+bool boolean_arg(napi_env env, napi_value value) {
+    napi_valuetype type; checked(napi_typeof(env, value, &type));
+    if (type != napi_boolean) throw std::invalid_argument("boolean");
+    bool result; checked(napi_get_value_bool(env, value, &result));
+    return result;
 }
 napi_value enqueue(napi_env env, napi_callback_info info, Operation operation) noexcept {
     napi_deferred deferred = nullptr; napi_value promise = nullptr;
@@ -169,7 +179,9 @@ napi_value enqueue(napi_env env, napi_callback_info info, Operation operation) n
         auto state = static_cast<Holder*>(data)->state;
         auto job = std::make_unique<Job>(); job->operation = operation; job->deferred = deferred;
         job->epoch = state->session.epoch();
-        std::size_t expected = operation == Operation::Begin ? 2 : operation == Operation::Connect ? 3 : operation == Operation::Disconnect ? 0 : 1;
+        std::size_t expected = operation == Operation::Begin ? 2 :
+            (operation == Operation::Connect || operation == Operation::Touch) ? 3 :
+            operation == Operation::Disconnect ? 0 : 1;
         if (argc != expected) throw std::invalid_argument("argument count");
         if (operation == Operation::Begin || operation == Operation::Connect) {
             job->host = string_arg(env, argv[0], 128); job->port = static_cast<std::uint16_t>(integer_arg(env, argv[1], 65535));
@@ -189,6 +201,13 @@ napi_value enqueue(napi_env env, napi_callback_info info, Operation operation) n
             job->button = integer_arg(env, argv[0], 14);
             if (job->button > 7 && job->button != 14) throw std::invalid_argument("button");
         }
+        if (operation == Operation::Touch) {
+            job->x = integer_arg(env, argv[0], 1000, 0);
+            job->y = integer_arg(env, argv[1], 1000, 0);
+            job->phase = integer_arg(env, argv[2], 4);
+            if (job->phase == 2) throw std::invalid_argument("touch phase");
+        }
+        if (operation == Operation::HoldSelect) job->held = boolean_arg(env, argv[0]);
         if (state->closing) { reject(env, deferred, "CANCELLED"); return promise; }
         if (state->queued.size() >= kMaxQueued) { reject(env, deferred, "BUSY"); return promise; }
         state->queued.push_back(std::move(job)); start_next(env, state); return promise;
@@ -203,6 +222,8 @@ napi_value begin(napi_env env, napi_callback_info info) { return enqueue(env, in
 napi_value finish(napi_env env, napi_callback_info info) { return enqueue(env, info, Operation::Finish); }
 napi_value connect(napi_env env, napi_callback_info info) { return enqueue(env, info, Operation::Connect); }
 napi_value press(napi_env env, napi_callback_info info) { return enqueue(env, info, Operation::Press); }
+napi_value touch(napi_env env, napi_callback_info info) { return enqueue(env, info, Operation::Touch); }
+napi_value hold_select(napi_env env, napi_callback_info info) { return enqueue(env, info, Operation::HoldSelect); }
 napi_value disconnect(napi_env env, napi_callback_info info) { return enqueue(env, info, Operation::Disconnect); }
 napi_value cancel(napi_env env, napi_callback_info info) noexcept {
     try {
@@ -231,6 +252,8 @@ napi_value Init(napi_env env, napi_value exports) {
             {"finishPairing", nullptr, finish, nullptr, nullptr, nullptr, napi_default, holder.get()},
             {"connect", nullptr, connect, nullptr, nullptr, nullptr, napi_default, holder.get()},
             {"press", nullptr, press, nullptr, nullptr, nullptr, napi_default, holder.get()},
+            {"touch", nullptr, touch, nullptr, nullptr, nullptr, napi_default, holder.get()},
+            {"holdSelect", nullptr, hold_select, nullptr, nullptr, nullptr, napi_default, holder.get()},
             {"disconnect", nullptr, disconnect, nullptr, nullptr, nullptr, napi_default, holder.get()},
             {"cancel", nullptr, cancel, nullptr, nullptr, nullptr, napi_default, holder.get()},
             {"version", nullptr, version, nullptr, nullptr, nullptr, napi_default, holder.get()}

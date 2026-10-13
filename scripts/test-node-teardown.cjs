@@ -20,13 +20,22 @@ const path = require('node:path');
   try {
     const accepted = once(server, 'connection');
     worker = new Worker(
-      "const { workerData } = require('node:worker_threads'); const remote = require(workerData.addon); remote.beginPairing('127.0.0.1', workerData.port).catch(() => {});",
+      `const { parentPort, workerData } = require('node:worker_threads');
+       const remote = require(workerData.addon);
+       remote.beginPairing('127.0.0.1', workerData.port).catch(() => {});
+       remote.touch(0, 1000, 1).catch(() => {});
+       remote.holdSelect(true).catch(() => {});
+       remote.touch(1000, 0, 4).catch(() => {});
+       remote.holdSelect(false).catch(() => {});
+       parentPort.postMessage('touch and held SELECT queued');`,
       { eval: true, workerData: { addon: path.resolve(process.argv[2]), port: server.address().port } }
     );
+    const queued = once(worker, 'message');
     const max = new Promise((_, reject) => {
       watchdog = setTimeout(() => reject(new Error('Native worker teardown exceeded 15s watchdog')), 15000);
     });
-    await Promise.race([accepted, max]);
+    const [, [queueMessage]] = await Promise.race([Promise.all([accepted, queued]), max]);
+    assert.equal(queueMessage, 'touch and held SELECT queued');
     const start = Date.now();
     await Promise.race([worker.terminate(), max]);
     const elapsed = Date.now() - start;

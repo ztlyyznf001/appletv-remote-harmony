@@ -2,21 +2,24 @@
 
 这是独立的 **ArkUI / ArkTS + C++** 工程源码。目标是 HarmonyOS 7.0 手机上的“发现 → 四位 PIN 配对 → 基础遥控”。它不是 APK 转换，也不是可安装的 HAP 成品。
 
-**验证状态：** 用户于 2026-10-13 反馈，当日上午版本（`285a7005`）已完成 TV 调试；未提供具体机型、构建版本或逐项验收记录。本次在该源码基线上适配 Android UI。云端没有 DevEco Studio、HarmonyOS SDK、Hvigor、OHPM 或 HDC，因此本次 UI 修改尚未完成鸿蒙编译与真机视觉/交互复验。主机 C++ / Node-API 测试的实际结果见 [验证记录](docs/VALIDATION.zh-CN.md)，不代表 ArkTS 编译成功。没有创建签名凭据、发布版本或修改 Android 构建流程。
+**验证状态：** 早期基线已由用户完成 TV 调试；当前上游 `b8e94da` 还包含用户本地 SDK 编译、启动与沉浸式边缘修复，详见[验证记录](docs/VALIDATION.zh-CN.md)。本次基于该上游补齐真实触摸板协议与界面，保留上述修复。触摸板修改仅完成云端主机检查，尚未使用 HarmonyOS SDK 编译或在手机 / Apple TV 上验证；不把此前版本的成功当作此次验收。没有创建签名凭据、发布版本或修改 Android 构建流程。
 
 ## 范围
 
-- Android 同款深色/薄荷绿视觉、顶部设备选择、方向键和底部操作区；窄屏/横屏/大字适配。
+- Android 同款深色/薄荷绿视觉、顶部设备选择、触摸板 / 方向键切换和底部操作区；窄屏/横屏/大字适配。
 - ArkUI 设备列表；mDNS `_companion-link._tcp`，解析实际 IP 和端口；手动 IP + 端口后备入口。
 - HAP SRP-3072 / SHA-512 配对、服务端 proof、Ed25519 身份、X25519 Pair Verify、HKDF-SHA512、ChaCha20-Poly1305。
 - OPACK / TLV8、TCP 流分帧、独立收发 nonce、XID 匹配、整次请求期限、取消与失败关闭。
 - 方向、选择、返回、Home、播放/暂停；一次点击对应按下和释放。
+- 真实 Companion 触摸事件：滑动移动、轻点确认、长按选择；多指 / 面板 / 模式切换取消触控，后台关闭会话。
 - 配对秘密经 HUKS AES-GCM 密文落盘；广播信息不作为可信身份。
 - 前台生命周期、有限重连、主动断开抑制重连；过期异步结果不更新界面。
 
-不含触控、长按、自动键盘/RTI、Siri、音量/CEC、后台常驻、AppGallery 发布。按钮成功表示协议请求得到了成功回复，不表示已读取电视画面确认。
+不含自动键盘/RTI、Siri、音量/CEC、后台常驻、AppGallery 发布。按钮成功表示协议请求得到了成功回复；触摸 MOVE / END 是无回复事件，发送成功只表示本机完成写入。两者均不表示已读取电视画面确认。
 
 ## 入口
+
+- [触摸板补齐与验收](docs/TOUCHPAD.zh-CN.md)
 
 - [本次 Android UI 适配与验收](docs/UI-ADAPTATION.zh-CN.md)
 

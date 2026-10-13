@@ -4,6 +4,7 @@ import * as companion from 'libcompanion.so';
 import { CompanionError } from 'libcompanion.so';
 import { Device, manualEndpoint } from './Device';
 import { RemoteState } from './RemoteState';
+import { TouchGesturePump, TouchSample } from './TouchGesturePump';
 import DeviceDiscovery from '../discovery/DeviceDiscovery';
 import CredentialStore from '../storage/CredentialStore';
 
@@ -17,6 +18,11 @@ export class RemoteController {
   private reconnectAttempts: number = 0;
   private reconnectTimer: number = -1;
   private initialized: boolean = false;
+  private touchPump: TouchGesturePump | undefined = undefined;
+  private touchHeld: boolean = false;
+  private touchHoldWait: Promise<void> | undefined = undefined;
+  private touchReleaseTimer: number = -1;
+  private touchReleaseResolve: (() => void) | undefined = undefined;
 
   async initialize(context: common.UIAbilityContext): Promise<void> {
     if (this.initialized) return;
@@ -171,7 +177,7 @@ export class RemoteController {
   }
 
   async press(code: number): Promise<void> {
-    if (!this.state.foreground || !this.state.connected || this.state.busy || this.state.buttonInFlight) return;
+    if (!this.state.foreground || !this.state.connected || this.state.busy || this.state.buttonInFlight || this.state.touchInFlight) return;
     const epoch: number = this.state.generation;
     this.state.buttonInFlight = true;
     try {
@@ -186,6 +192,119 @@ export class RemoteController {
     } finally {
       if (this.current(epoch)) this.state.buttonInFlight = false;
     }
+  }
+
+  beginTouch(x: number, y: number): boolean {
+    if (!this.state.foreground || !this.state.connected || this.state.busy || this.state.buttonInFlight ||
+      this.state.touchInFlight || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    const epoch: number = this.state.generation;
+    const pump: TouchGesturePump = new TouchGesturePump(
+      (sample: TouchSample) => this.sendTouchSample(pump, epoch, sample),
+      (error: Error) => this.failTouch(pump, epoch, error));
+    this.touchPump = pump;
+    this.touchHeld = false;
+    this.state.touchInFlight = true;
+    pump.offer(new TouchSample(x, y, TouchSample.BEGIN));
+    return true;
+  }
+
+  moveTouch(x: number, y: number): void {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) { this.cancelTouch(); return; }
+    this.touchPump?.offer(new TouchSample(x, y, TouchSample.MOVE));
+  }
+
+  endTouch(x: number, y: number, tap: boolean): void {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) { this.cancelTouch(); return; }
+    this.touchPump?.offer(new TouchSample(x, y, TouchSample.END, tap));
+  }
+
+  holdTouch(): void {
+    this.touchPump?.offer(new TouchSample(0, 0, TouchSample.HOLD));
+  }
+
+  /** Modal, mode, pointer, and watchdog cancellation: END/release, never SELECT. */
+  cancelTouch(): void {
+    this.touchPump?.cancel();
+    this.clearTouchRelease();
+  }
+
+  private async sendTouchSample(pump: TouchGesturePump, epoch: number, sample: TouchSample): Promise<void> {
+    if (!this.touchCurrent(pump, epoch)) return;
+    if (sample.phase === TouchSample.HOLD) {
+      await companion.holdSelect(true);
+      if (this.touchCurrent(pump, epoch)) {
+        this.touchHeld = true;
+        // Relative timer begins only after native SELECT-down completes. Never
+        // measure a hold with wall time, which can jump when clocks synchronize.
+        this.touchHoldWait = this.waitTouchRelease(1000);
+      }
+      return;
+    }
+    await companion.touch(sample.x, sample.y, sample.phase);
+    if (!this.touchCurrent(pump, epoch) || sample.phase !== TouchSample.END) return;
+    // Match Android's real one-second SELECT-down minimum. Cancellation skips
+    // the delay. The timer is cleared on every session invalidation.
+    if (sample.cancelled) this.clearTouchRelease();
+    else if (this.touchHeld && this.touchHoldWait !== undefined) await this.touchHoldWait;
+    if (!this.touchCurrent(pump, epoch)) return;
+    if (this.touchHeld) {
+      await companion.holdSelect(false);
+      if (!this.touchCurrent(pump, epoch)) return;
+      this.touchHeld = false;
+    }
+    // END must finish before a tap SELECT. Cancellation mutates the same terminal
+    // sample, including while the native END Promise or hold timer is pending.
+    if (sample.tap && !sample.cancelled) {
+      await companion.press(6);
+      if (!this.touchCurrent(pump, epoch)) return;
+    }
+    this.touchPump = undefined;
+    this.state.touchInFlight = false;
+    this.state.status = sample.cancelled ? '已连接 · 触控已取消' : '已连接 · 触控已发送';
+  }
+
+  private touchCurrent(pump: TouchGesturePump, epoch: number): boolean {
+    return this.touchPump === pump && this.current(epoch) && this.state.connected;
+  }
+
+  private failTouch(pump: TouchGesturePump, epoch: number, error: Error): void {
+    if (!this.touchCurrent(pump, epoch)) return;
+    this.abortTouch();
+    companion.cancel();
+    this.state.connected = false;
+    this.state.status = this.errorMessage((error as CompanionError).code);
+    // Input failures, including authentication failures, never replay gestures.
+  }
+
+  private waitTouchRelease(delay: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      this.touchReleaseResolve = resolve;
+      this.touchReleaseTimer = setTimeout(() => {
+        // A callback already dispatched before clearTimeout must not clear the
+        // timer or Promise belonging to a newer gesture/session.
+        if (this.touchReleaseResolve !== resolve) return;
+        this.touchReleaseTimer = -1;
+        this.touchReleaseResolve = undefined;
+        this.touchHoldWait = undefined;
+        resolve();
+      }, delay);
+    });
+  }
+
+  private clearTouchRelease(): void {
+    if (this.touchReleaseTimer >= 0) { clearTimeout(this.touchReleaseTimer); this.touchReleaseTimer = -1; }
+    const resolve: (() => void) | undefined = this.touchReleaseResolve;
+    this.touchReleaseResolve = undefined;
+    this.touchHoldWait = undefined;
+    if (resolve !== undefined) resolve();
+  }
+
+  private abortTouch(): void {
+    this.touchPump?.abort();
+    this.touchPump = undefined;
+    this.state.touchInFlight = false;
+    this.touchHeld = false;
+    this.clearTouchRelease();
   }
 
   disconnect(): void { this.stopSession(true); }
@@ -230,6 +349,7 @@ export class RemoteController {
 
   private stopSession(userInitiated: boolean): void {
     this.clearReconnectTimer();
+    this.abortTouch();
     ++this.state.generation;
     this.state.connected = false; this.state.busy = false; this.state.buttonInFlight = false;
     this.state.needsPin = false; this.state.pin = ''; this.state.status = '未连接';
@@ -239,7 +359,10 @@ export class RemoteController {
       catch (_) { this.state.status = '已断开，但无法保存自动重连设置。'; }
     }
     companion.cancel();
-    // Best-effort protocol cleanup; cancel() already aborts active/queued I/O synchronously.
+    // Hard shutdown is deliberate for background/disconnect: native cancel()
+    // closes transport and invalidates active/queued I/O synchronously. Remote
+    // receipt of END/SELECT-up cannot be guaranteed after socket closure/loss.
+    // In-session cancelTouch() instead sends END/SELECT-up before unlocking.
     companion.disconnect().catch(() => {});
   }
 
@@ -274,6 +397,7 @@ export class RemoteController {
     try { return this.credentials?.contains(id) === true; }
     catch (_) {
       this.state.ready = false; this.state.connected = false; this.reconnectEnabled = false;
+      this.abortTouch();
       this.clearReconnectTimer(); companion.cancel();
       this.state.status = '安全存储状态不确定，连接已停用。请重新打开应用后检查配对身份。';
       return false;

@@ -20,6 +20,22 @@ confirmed target-bound forget, mDNS resolve cancellation, AES-GCM envelope/AAD,
 corruption rejection, plaintext buffer ownership/wiping, save rollback and failure
 handling. The harness includes success and nonzero-error discovery-start events.
 
+Touch coverage uses the actual `TouchGesturePump.ets` and `RemoteController.ets`:
+20,000-move bounded coalescing, one native Promise at a time, BEGIN/MOVE/END order,
+integer coordinate clamping, END before tap SELECT, genuine held SELECT down/up
+with Android's one-second minimum, immediate cancellation release, duplicate
+gesture rejection, competing-button locks, cancellation during every async edge,
+late completion/failure after reconnect, background/device-switch transport close,
+timer cleanup, no replay after auth/network failure, and repeated gesture cleanup.
+Mock clocks and native gates make these race cases deterministic; they do not
+establish real packet delivery or tvOS hold behavior.
+
+In-session mode/modal/pointer cancellation sends END and releases a held SELECT.
+Background/disconnect invalidates the pump and immediately closes native transport
+to protect a future session from old work. Remote receipt of release cannot be
+guaranteed after transport closure or network loss; the native graceful-disconnect
+path is tested independently.
+
 Passing these tests does **not** establish ArkTS syntax/type legality, ArkUI layout,
 SDK API or ABI compatibility, actual HUKS behavior, N-API scheduling, HAP packaging,
 permissions behavior, signing/installability, or Apple TV/tvOS interoperability.

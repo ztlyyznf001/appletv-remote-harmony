@@ -183,7 +183,210 @@ void verify_server(Peer& p, const Credentials& credentials, const Bytes& client_
 void handshake(Peer& p) {
     auto system = p.read(); check(system.first == 8 && system.second.at("_i").string() == "_systemInfo", "systemInfo handshake");
     check(system.second.at("_c").dict().at("model").string() == "HarmonyOS", "Harmony model"); p.response(system.second);
-    auto session = p.read(); check(session.second.at("_i").string() == "_sessionStart", "button-only session handshake"); p.response(session.second, true);
+    auto touch = p.read(); check(touch.first == 8 && touch.second.at("_i").string() == "_touchStart", "touch negotiation before session");
+    check(touch.second.at("_t").uint() == 2, "touch negotiation is a command");
+    const auto& surface = touch.second.at("_c").dict();
+    check(surface.size() == 3 && std::get<double>(surface.at("_width").data) == 1000.0 &&
+        std::get<double>(surface.at("_height").data) == 1000.0 && surface.at("_tFl").uint() == 0,
+        "1000 x 1000 double touch surface and flags"); p.response(touch.second);
+    auto session = p.read(); check(session.second.at("_i").string() == "_sessionStart", "remote session after touch negotiation"); p.response(session.second, true);
+}
+
+struct InputTrace {
+    std::uint64_t last_xid = 0, last_ns = 0;
+    void ordered(const Dict& message) {
+        check(message.at("_x").uint() > last_xid, "strictly increasing shared input XID");
+        last_xid = message.at("_x").uint();
+    }
+    void touch(Peer& p, unsigned x, unsigned y, unsigned phase) {
+        auto packet = p.read(); const auto& message = packet.second; ordered(message);
+        check(packet.first == 8 && message.at("_i").string() == "_hidT" && message.at("_t").uint() == 1, "encrypted touch event, not command");
+        const auto& content = message.at("_c").dict();
+        check(content.size() == 5 && content.at("_cx").uint() == x && content.at("_cy").uint() == y &&
+            content.at("_tPh").uint() == phase && content.at("_tFg").uint() == 1, "touch payload coordinates/phase/flags");
+        auto ns = content.at("_ns").uint();
+        check(ns >= last_ns && ns < 5000000000ULL, "monotonic nanoseconds since touch negotiation, not wall-clock time");
+        last_ns = ns;
+        // Deliberately no response: touch completion must never wait for an ACK.
+    }
+    Dict button(Peer& p, unsigned state, unsigned button = 6) {
+        auto packet = p.read(); const auto& message = packet.second; ordered(message);
+        check(packet.first == 8 && message.at("_i").string() == "_hidC" && message.at("_t").uint() == 2, "encrypted button command");
+        const auto& content = message.at("_c").dict();
+        check(content.at("_hBtS").uint() == state && content.at("_hidC").uint() == button, "held button edge");
+        return message;
+    }
+};
+
+void touch_and_hold_lifecycle() {
+    Listener listener; auto credentials = saved();
+    auto server = std::async(std::launch::async, [&] {
+        Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+        InputTrace input;
+        input.touch(p, 0, 1000, 1); input.touch(p, 1000, 0, 3);
+        auto down = input.button(p, 1); p.response(down);
+        input.touch(p, 500, 500, 3);
+        auto up = input.button(p, 2); p.response(up);
+        input.touch(p, 1000, 1000, 4);
+        input.touch(p, 0, 0, 1); input.touch(p, 0, 0, 4);
+        p.eof();
+    });
+    Session session(1s); auto epoch = session.epoch(); session.connect("127.0.0.1", listener.port, credentials, epoch);
+    session.hold_select(false, epoch); // No down yet, so no redundant up packet.
+    session.touch(0, 1000, 1, epoch); session.touch(1000, 0, 3, epoch);
+    session.hold_select(true, epoch); session.hold_select(true, epoch);
+    session.touch(500, 500, 3, epoch);
+    session.hold_select(false, epoch); session.hold_select(false, epoch);
+    session.touch(1000, 1000, 4, epoch);
+    session.touch(0, 0, 1, epoch); session.touch(0, 0, 4, epoch);
+    session.disconnect(epoch); server.get();
+}
+
+void input_validation_preserves_session() {
+    Listener listener; auto credentials = saved();
+    auto server = std::async(std::launch::async, [&] {
+        Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+        InputTrace input; input.touch(p, 50, 75, 1);
+        auto down = input.button(p, 1); p.response(down);
+        auto up = input.button(p, 2); p.response(up);
+        input.touch(p, 50, 75, 4);
+        auto tap_down = input.button(p, 1); auto tap_up = input.button(p, 2);
+        p.response(tap_down); p.response(tap_up); p.eof();
+    });
+    Session session(1s); auto epoch = session.epoch();
+    rejects([&] { session.touch(0, 0, 1, epoch); }, "touch requires a verified session");
+    rejects([&] { session.hold_select(true, epoch); }, "hold requires a verified session");
+    session.connect("127.0.0.1", listener.port, credentials, epoch);
+    for (auto phase : {0, 2, 5, -1}) rejects([&] { session.touch(0, 0, phase, epoch); }, "unsupported touch phase rejected");
+    rejects([&] { session.touch(1001, 0, 1, epoch); }, "out-of-range x rejected");
+    rejects([&] { session.touch(0, 1001, 1, epoch); }, "out-of-range y rejected");
+    rejects([&] { session.touch(-1, 0, 1, epoch); }, "negative unsigned conversion rejected");
+    rejects([&] { session.touch(0, 0, 3, epoch); }, "move without begin rejected");
+    rejects([&] { session.touch(0, 0, 4, epoch); }, "end without begin rejected");
+    session.touch(50, 75, 1, epoch);
+    rejects([&] { session.touch(0, 0, 1, epoch); }, "overlapping touch begin rejected");
+    session.hold_select(true, epoch);
+    rejects([&] { session.press(6, epoch); }, "tap cannot silently release held select");
+    rejects([&] { session.press(99, epoch); }, "invalid button preserves held input");
+    session.hold_select(false, epoch); session.touch(50, 75, 4, epoch);
+    session.press(6, epoch); session.disconnect(epoch); server.get();
+}
+
+void input_cleanup_on_disconnect() {
+    Listener listener; auto credentials = saved();
+    auto server = std::async(std::launch::async, [&] {
+        Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+        InputTrace input; input.touch(p, 1, 2, 1); input.touch(p, 700, 900, 3);
+        auto down = input.button(p, 1); p.response(down);
+        input.button(p, 2); // Cleanup sends up without waiting for response.
+        input.touch(p, 700, 900, 4); p.eof();
+    });
+    Session session(1s); auto epoch = session.epoch(); session.connect("127.0.0.1", listener.port, credentials, epoch);
+    session.touch(1, 2, 1, epoch); session.touch(700, 900, 3, epoch); session.hold_select(true, epoch);
+    auto start = std::chrono::steady_clock::now(); session.disconnect(epoch);
+    check(std::chrono::steady_clock::now() - start < 500ms, "disconnect does not await release acknowledgement");
+    session.disconnect(epoch); server.get();
+    rejects([&] { session.touch(0, 0, 1, epoch); }, "disconnect clears touch state");
+    rejects([&] { session.hold_select(true, epoch); }, "disconnect clears hold state");
+}
+
+void input_cleanup_on_hold_failure() {
+    // The TV can accept the edge but reject, truncate or omit its acknowledgement.
+    for (int failure : {0, 1, 2}) {
+        Listener listener; auto credentials = saved();
+        auto server = std::async(std::launch::async, [&] {
+            Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+            InputTrace input; input.touch(p, 125, 875, 1);
+            auto down = input.button(p, 1);
+            if (failure == 0) p.send(8, {{"_t", 3}, {"_x", down.at("_x")}, {"_ec", 1}});
+            if (failure == 1) p.write({8, 0}); // Leave an incomplete inbound frame.
+            input.button(p, 2); input.touch(p, 125, 875, 4); p.eof();
+        });
+        Session session(300ms); auto epoch = session.epoch(); session.connect("127.0.0.1", listener.port, credentials, epoch);
+        session.touch(125, 875, 1, epoch);
+        rejects([&] { session.hold_select(true, epoch); }, "failed hold acknowledgement rejects");
+        server.get();
+        rejects([&] { session.hold_select(false, epoch); }, "failed hold closes session");
+        rejects([&] { session.touch(125, 875, 4, epoch); }, "failed hold clears touch session");
+    }
+}
+
+void input_cancel_and_reconnect() {
+    Listener listener; auto credentials = saved();
+    auto server = std::async(std::launch::async, [&] {
+        { Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+            InputTrace input; input.touch(p, 10, 20, 1); auto down = input.button(p, 1); p.response(down); p.eof(); }
+        Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+        InputTrace input; input.touch(p, 30, 40, 1);
+        auto down = input.button(p, 1); p.response(down);
+        auto up = input.button(p, 2); p.response(up);
+        input.touch(p, 30, 40, 4); p.eof();
+    });
+    Session session(1s); auto stale = session.epoch(); session.connect("127.0.0.1", listener.port, credentials, stale);
+    session.touch(10, 20, 1, stale); session.hold_select(true, stale);
+    session.cancel(); auto epoch = session.epoch();
+    session.connect("127.0.0.1", listener.port, credentials, epoch);
+    rejects([&] { session.touch(10, 20, 4, stale); }, "old queued touch cannot enter reconnected session");
+    rejects([&] { session.hold_select(false, stale); }, "old queued up cannot enter reconnected session");
+    session.hold_select(false, epoch); // State reset: must not replay old release.
+    session.touch(30, 40, 1, epoch); session.hold_select(true, epoch); session.hold_select(false, epoch);
+    session.touch(30, 40, 4, epoch); session.disconnect(epoch); server.get();
+}
+
+void held_select_cancel_pending_reply() {
+    Listener listener; auto credentials = saved(); std::promise<void> down_received;
+    auto received = down_received.get_future();
+    auto server = std::async(std::launch::async, [&] {
+        Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+        InputTrace input; input.touch(p, 250, 750, 1); input.button(p, 1);
+        down_received.set_value(); p.eof();
+    });
+    Session session(2s); auto epoch = session.epoch(); session.connect("127.0.0.1", listener.port, credentials, epoch);
+    session.touch(250, 750, 1, epoch);
+    auto hold = std::async(std::launch::async, [&] {
+        rejects([&] { session.hold_select(true, epoch); }, "cancel interrupts held SELECT acknowledgement");
+    });
+    check(received.wait_for(1s) == std::future_status::ready, "held SELECT reached peer");
+    auto start = std::chrono::steady_clock::now(); session.cancel(); hold.get();
+    check(std::chrono::steady_clock::now() - start < 300ms, "held SELECT cancel promptly closes transport");
+    server.get();
+    rejects([&] { session.touch(250, 750, 4, epoch); }, "pending touch release invalidated with held SELECT");
+    rejects([&] { session.hold_select(false, session.epoch()); }, "cancelled hold leaves no live session");
+}
+
+void held_select_survives_other_button() {
+    Listener listener; auto credentials = saved();
+    auto server = std::async(std::launch::async, [&] {
+        Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret)); handshake(p);
+        InputTrace input; input.touch(p, 400, 600, 1);
+        auto held = input.button(p, 1); p.response(held);
+        auto down = input.button(p, 1, 14); input.button(p, 2, 14);
+        p.send(8, {{"_t", 3}, {"_x", down.at("_x")}, {"_ec", 1}});
+        input.button(p, 2); input.touch(p, 400, 600, 4); p.eof();
+    });
+    Session session(1s); auto epoch = session.epoch(); session.connect("127.0.0.1", listener.port, credentials, epoch);
+    session.touch(400, 600, 1, epoch); session.hold_select(true, epoch);
+    rejects([&] { session.press(14, epoch); }, "other button failure closes session");
+    server.get();
+    rejects([&] { session.hold_select(false, epoch); }, "other button failure clears SELECT and touch");
+}
+
+void touch_negotiation_failure() {
+    for (bool reject : {true, false}) {
+        Listener listener; auto credentials = saved();
+        auto server = std::async(std::launch::async, [&] {
+            Peer p(listener.accept()); verify_server(p, credentials, ed25519_public_key(credentials.client_secret));
+            auto info = p.read(); check(info.second.at("_i").string() == "_systemInfo", "systemInfo first"); p.response(info.second);
+            auto touch = p.read(); check(touch.second.at("_i").string() == "_touchStart", "touchStart negotiation required");
+            if (reject) p.send(8, {{"_t", 3}, {"_x", touch.second.at("_x")}, {"_ec", 1}});
+            p.eof(); // Failure must not continue startup or advertise a connected remote.
+        });
+        Session session(300ms); auto epoch = session.epoch();
+        rejects([&] { session.connect("127.0.0.1", listener.port, credentials, epoch); }, "touch negotiation rejection/timeout fails closed");
+        server.get();
+        rejects([&] { session.touch(0, 0, 1, epoch); }, "touch cannot use rejected negotiation");
+        rejects([&] { session.press(6, epoch); }, "remote unavailable after rejected negotiation");
+    }
 }
 
 void full_lifecycle() {
@@ -341,7 +544,12 @@ void concurrent_cancel_and_new_epoch() {
 }
 void ipv6_and_numeric_addresses() {
     Listener listener(true);
-    auto server = std::async(std::launch::async, [&] { Peer p(listener.accept()); auto request = p.fields(3); p.auth(4, request.first, {{6, {2}}, {2, Bytes(16, 1)}, {3, Bytes{1}}}); p.eof(); });
+    auto server = std::async(std::launch::async, [&] {
+        Peer p(listener.accept()); auto request = p.fields(3);
+        std::vector<std::pair<std::uint8_t, Bytes>> reply;
+        reply.emplace_back(6, Bytes(1, 2)); reply.emplace_back(2, Bytes(16, 1)); reply.emplace_back(3, Bytes(1, 1));
+        p.auth(4, request.first, std::move(reply)); p.eof();
+    });
     Session session(1s); auto epoch = session.epoch(); session.begin_pairing("::1", listener.port, epoch); session.disconnect(epoch); server.get();
     rejects([&] { session.begin_pairing("localhost", listener.port, epoch); }, "hostnames are not accepted");
     rejects([&] { session.begin_pairing("127.0.0.1", 0, epoch); }, "zero port rejected");
@@ -352,6 +560,14 @@ int main() {
     try {
         for (auto test : std::vector<std::pair<const char*, std::function<void()>>>{
             {"pair, verify, handshake, all buttons, NoOp and XID interleaving", full_lifecycle},
+            {"encrypted touch events and idempotent held SELECT ordering", touch_and_hold_lifecycle},
+            {"input validation rejects invalid phases/sequence without damaging session", input_validation_preserves_session},
+            {"disconnect releases held SELECT and last touch coordinate without ACK", input_cleanup_on_disconnect},
+            {"rejected, partial and missing hold replies release all input", input_cleanup_on_hold_failure},
+            {"cancel clears input and stale events cannot enter reconnect", input_cancel_and_reconnect},
+            {"cancel interrupts a held SELECT with a pending reply", held_select_cancel_pending_reply},
+            {"other button failure preserves and releases held SELECT", held_select_survives_other_button},
+            {"touch negotiation rejection and timeout fail closed", touch_negotiation_failure},
             {"strict credential serialization", credential_validation},
             {"reject forged SRP proof", bad_pairing_proof},
             {"reject wrong identity, forged signature and verify AEAD tag", identity_rejection},

@@ -4,12 +4,14 @@ import { RemoteState } from '../model/RemoteState';
 import { remoteController } from '../model/RemoteController';
 import { RemoteLayout } from '../model/RemoteLayout';
 import { RemoteKey } from '../components/RemoteKey';
+import { RemoteTouchPad } from '../components/RemoteTouchPad';
 
 @Entry
 @Component
 struct Index {
   @State state: RemoteState = remoteController.state;
   @State panel: string = '';
+  @State touchMode: boolean = true;
   @State manualAddress: string = '';
   @State manualPort: string = '';
   @State forgetTargetId: string = '';
@@ -22,6 +24,25 @@ struct Index {
     this.fontScale = (this.getUIContext().getHostContext() as common.UIAbilityContext | undefined)?.config.fontSizeScale ?? 1;
   }
 
+  aboutToDisappear(): void { remoteController.cancelTouch(); }
+
+  private setPanel(panel: string): void {
+    remoteController.cancelTouch();
+    this.panel = panel;
+  }
+
+  private setTouchMode(touch: boolean): void {
+    if (this.touchMode === touch) return;
+    remoteController.cancelTouch();
+    this.touchMode = touch;
+  }
+
+  // A contact stays enabled while its own bounded input pump is draining.
+  private touchEnabled(): boolean {
+    return this.state.foreground && this.state.connected && !this.state.busy &&
+      !this.state.buttonInFlight && !this.modalOpen();
+  }
+
   private layout(): RemoteLayout {
     return new RemoteLayout(this.windowWidth, this.windowHeight, this.fontScale);
   }
@@ -31,7 +52,7 @@ struct Index {
   }
 
   private controlsEnabled(): boolean {
-    return this.state.foreground && this.state.connected && !this.state.busy && !this.state.buttonInFlight;
+    return this.state.foreground && this.state.connected && !this.state.busy && !this.state.buttonInFlight && !this.state.touchInFlight;
   }
 
   // A command in flight locks input without flashing every key to a disconnected palette.
@@ -40,7 +61,7 @@ struct Index {
   }
 
   private canSelect(): boolean {
-    return this.state.foreground && this.state.ready && !this.state.busy && !this.state.buttonInFlight;
+    return this.state.foreground && this.state.ready && !this.state.busy && !this.state.buttonInFlight && !this.state.touchInFlight;
   }
 
   private sideLayout(): boolean {
@@ -79,7 +100,7 @@ struct Index {
   private openManual(): void {
     this.manualAddress = this.state.selected?.host ?? '';
     this.manualPort = this.state.selected?.port.toString() ?? '';
-    this.panel = 'manual';
+    this.setPanel('manual');
   }
 
   private selectDevice(device: Device): void {
@@ -105,23 +126,41 @@ struct Index {
         }.padding({ left: 14, right: 14, top: 10, bottom: 10 }).constraintSize({ minHeight: 68 })
       }.layoutWeight(1).borderRadius(20).backgroundColor('#243133')
         .enabled(this.canSelect()).accessibilityText('选择或切换 Apple TV')
-        .onClick(() => { this.panel = 'devices'; })
+        .onClick(() => { this.setPanel('devices'); })
       Button('连接', { type: ButtonType.Normal }).fontSize(14).fontColor('#B8E4CA')
         .backgroundColor(Color.Transparent).height(48).padding({ left: 12, right: 12 })
-        .onClick(() => { this.panel = 'options'; })
+        .onClick(() => { this.setPanel('options'); })
     }.width('100%')
   }
 
   @Builder
   modeLabel() {
-    Row() {
-      Text('方向键').fontSize(14).fontWeight(FontWeight.Medium).fontColor('#D6F6E2')
-        .padding({ left: 24, right: 24, top: 14, bottom: 14 })
-        .backgroundColor('#284C3C').borderRadius(14)
-      Blank()
-      Text(this.state.connected ? '轻点控制电视' : '连接后即可使用')
-        .fontSize(12).fontColor('#ABBDB7').maxLines(2).textAlign(TextAlign.End)
+    Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+      Button('触摸板', { type: ButtonType.Normal }).fontSize(14).height(48)
+        .fontColor(this.touchMode ? '#D6F6E2' : '#ABBDB7')
+        .backgroundColor(this.touchMode ? '#284C3C' : Color.Transparent).borderRadius(14)
+        .padding({ left: 20, right: 20 }).accessibilityText(this.touchMode ? '触摸板，已选中' : '切换触摸板')
+        .onClick(() => { this.setTouchMode(true); })
+      Button('方向键', { type: ButtonType.Normal }).fontSize(14).height(48)
+        .fontColor(this.touchMode ? '#ABBDB7' : '#D6F6E2')
+        .backgroundColor(this.touchMode ? Color.Transparent : '#284C3C').borderRadius(14)
+        .padding({ left: 20, right: 20 }).accessibilityText(this.touchMode ? '切换方向键' : '方向键，已选中')
+        .onClick(() => { this.setTouchMode(false); })
     }.width('100%')
+  }
+
+  @Builder
+  navigationPad() {
+    if (this.touchMode) {
+      RemoteTouchPad({ inputEnabled: this.touchEnabled(), available: this.controlsAvailable(), padSize: this.padSize(),
+        onBegin: (x: number, y: number): boolean => { return remoteController.beginTouch(x, y); },
+        onMove: (x: number, y: number) => { remoteController.moveTouch(x, y); },
+        onEnd: (x: number, y: number, tap: boolean) => { remoteController.endTouch(x, y, tap); },
+        onHold: () => { remoteController.holdTouch(); },
+        onCancel: () => { remoteController.cancelTouch(); } })
+    } else {
+      this.directionPad()
+    }
   }
 
   @Builder
@@ -208,32 +247,36 @@ struct Index {
           Scroll() {
             Column({ space: 12 }) {
               this.modeLabel()
-              this.directionPad()
+              this.navigationPad()
               this.connectionStatus()
             }.width('100%')
           }.layoutWeight(1).height('100%').align(Alignment.Top)
+            .onGestureJudgeBegin(() => this.state.touchInFlight ? GestureJudgeResult.REJECT : GestureJudgeResult.CONTINUE)
           Scroll() { this.actions() }.width(120).height('100%').align(Alignment.Bottom)
         }.layoutWeight(1).width('100%')
+          .onGestureJudgeBegin(() => this.state.touchInFlight ? GestureJudgeResult.REJECT : GestureJudgeResult.CONTINUE)
       } else if (this.layout().dock) {
         this.header()
         this.modeLabel()
         Scroll() {
           Column({ space: 12 }) {
-            this.directionPad()
+            this.navigationPad()
             this.connectionStatus()
           }.width('100%')
         }.layoutWeight(1).width('100%').align(Alignment.Center)
+          .onGestureJudgeBegin(() => this.state.touchInFlight ? GestureJudgeResult.REJECT : GestureJudgeResult.CONTINUE)
         this.actions()
       } else {
         Scroll() {
           Column({ space: 12 }) {
             this.header()
             this.modeLabel()
-            this.directionPad()
+            this.navigationPad()
             this.connectionStatus()
             this.actions()
           }.width('100%')
         }.layoutWeight(1).width('100%')
+          .onGestureJudgeBegin(() => this.state.touchInFlight ? GestureJudgeResult.REJECT : GestureJudgeResult.CONTINUE)
       }
     }.width(this.contentWidth()).height('100%').padding({ top: 12, bottom: 12 })
       .enabled(!this.modalOpen())
@@ -258,18 +301,18 @@ struct Index {
     this.panelText(this.state.status)
     this.panelText(`${this.state.devices.length} 台附近设备 · ${this.state.discoveryText}`)
     this.panelText('与 Apple TV 连接同一 Wi-Fi。打开应用会尝试恢复已配对设备；主动断开后不会自动重连。')
-    this.panelButton('选择或切换设备', () => { this.panel = 'devices'; }, this.canSelect(), false)
+    this.panelButton('选择或切换设备', () => { this.setPanel('devices'); }, this.canSelect(), false)
     this.panelButton(this.state.connected ? '断开连接' : (this.state.busy ? '取消连接' : '连接 / 配对'), () => {
       this.closePanel();
       if (this.state.connected || this.state.busy) remoteController.disconnect();
-      else if (this.state.selected === undefined) this.panel = 'devices';
+      else if (this.state.selected === undefined) this.setPanel('devices');
       else remoteController.connectSelected();
     }, this.state.foreground && this.state.ready, true)
     if (this.state.canForget) {
       this.panelButton('移除已保存配对', () => {
         this.forgetTargetId = this.state.selected?.id ?? '';
         this.forgetTargetName = this.state.selected?.name ?? 'Apple TV';
-        this.panel = 'forget';
+        this.setPanel('forget');
       }, this.canSelect(), false)
     }
     this.panelButton('关闭', () => { this.closePanel(); }, true, false)

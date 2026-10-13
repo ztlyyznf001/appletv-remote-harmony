@@ -10,6 +10,7 @@ export class RemoteState {
   status: string = '选择 Apple TV，开始配对';
   busy: boolean = false;
   buttonInFlight: boolean = false;
+  touchInFlight: boolean = false;
   connected: boolean = false;
   needsPin: boolean = false;
   pin: string = '';
