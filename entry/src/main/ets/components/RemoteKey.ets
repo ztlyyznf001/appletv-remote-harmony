@@ -3,7 +3,7 @@
 export struct RemoteKey {
   @Prop label: string = '';
   @Prop icon: Resource = $r('app.media.remote_select');
-  @Prop enabled: boolean = false;
+  @Prop inputEnabled: boolean = false;
   @Prop available: boolean = false;
   @Prop primary: boolean = false;
   @Prop showLabel: boolean = false;
@@ -26,7 +26,7 @@ export struct RemoteKey {
     .borderRadius(this.primary ? this.keyWidth / 2 : 20)
     .backgroundColor(this.available && this.primary ? '#B8E4CA' : (this.showLabel ? '#243133' : '#182224'))
     .opacity(1)
-    .enabled(this.enabled)
+    .enabled(this.inputEnabled)
     .accessibilityText(this.label)
     .stateEffect(true)
     .onClick(() => { this.onPress(); })

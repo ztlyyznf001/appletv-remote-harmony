@@ -127,7 +127,7 @@ struct Index {
   @Builder
   directionKey(label: string, icon: Resource, code: number, primary: boolean) {
     RemoteKey({ label: label, icon: icon, primary: primary,
-      enabled: this.controlsEnabled(), available: this.controlsAvailable(),
+      inputEnabled: this.controlsEnabled(), available: this.controlsAvailable(),
       keyWidth: (this.padSize() - 36) / 3, keyHeight: (this.padSize() - 36) / 3,
       onPress: () => { remoteController.press(code); } })
   }
@@ -171,7 +171,7 @@ struct Index {
   @Builder
   actionKey(label: string, icon: Resource, code: number) {
     RemoteKey({ label: label, icon: icon, showLabel: true,
-      enabled: this.controlsEnabled(), available: this.controlsAvailable(),
+      inputEnabled: this.controlsEnabled(), available: this.controlsAvailable(),
       keyWidth: this.layout().actionWidth,
       keyHeight: Math.max(80, 46 + 30 * this.fontScale), onPress: () => { remoteController.press(code); } })
   }
@@ -386,6 +386,10 @@ struct Index {
 
   build() {
     Stack({ alignContent: Alignment.Center }) {
+      // Extend only the backdrop, preserving safe hit targets around cutouts and gestures.
+      Column().width('100%').height('100%').backgroundColor('#101719')
+        .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .hitTestBehavior(HitTestMode.None)
       this.mainContent()
       if (this.modalOpen()) {
         // A full overlay blocks hit testing on the remote; outside taps deliberately do not dismiss a PIN.
