@@ -102,3 +102,16 @@ NODE_HEADERS="/实际/node-v24.19.0/src" ./scripts/test-node-bridge.sh
 用户选择独立公开仓库 `appletv-remote-harmony` 后，将 community 提交 `805b26780e0508ae636af28537f1f0598d08a862` 的 `harmony/` 内容移至仓库根目录，并更新当前运行路径、根 README 和 MIT LICENSE。上方 community PR 记录保留为历史来源；不合并该 PR。
 
 原始 `validation/` 日志中的 `harmony/` 路径属于历史执行目录。当前重现命令使用上方的新路径。本仓库未配置 GitHub Actions CI，Android CI 的成功结果不作为鸿蒙验收。SDK、HAP、签名与真机状态仍为未验证。
+
+## 2026-10-13 Android UI 适配
+
+用户反馈上午的独立仓库基线 `285a7005` 已完成 TV 调试。本次 UI 更改的主机回归、17 项页面/布局检查以及尚未完成的 SDK 编译/真机复验，见 [UI 适配与验收](UI-ADAPTATION.zh-CN.md)。历史记录中的未验证项描述其当时执行边界，不覆盖或否定用户后续调试反馈。
+
+## 2026-10-14 本地 SDK 编译与沉浸式修复
+
+- 基于 UI 分支 `476c573`，使用 DevEco / HarmonyOS SDK 26、Hvigor 6.26.8 和 Harmony ARM64 OpenSSL 3.5.9 构建；原生、ArkTS、HAP 打包与签名校验通过。
+- 将不存在的 `napi/native_node_api.h` 改为 SDK 提供的 `node_api.h`；将组件 `enabled` 属性改名为 `inputEnabled`，避免与 ArkUI 内置方法冲突。
+- 深色背景延伸至系统安全区，系统栏与启动窗口采用相同底色；控件继续避开安全区。
+- 真机曾在页面加载前设置窗口背景时抛出 `1300002` 并退出。现改为 `loadContent` 成功回调后设置外观，同时捕获窗口异常和系统栏 Promise 拒绝。
+- 修复包已覆盖安装，用户确认正常启动且上下白边消失；该次启动日志未再出现上述 RuntimeError。未据此扩大声明 Apple TV 协议或全部屏幕形态已验证。
+- 提交不包含签名配置、证书、私钥、设备标识、日志或 HAP。
