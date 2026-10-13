@@ -1,0 +1,9 @@
+{
+  "modelVersion": "26.0.0",
+  "name": "apple-tv-harmony-poc",
+  "version": "0.1.0",
+  "description": "Native HarmonyOS Companion proof of concept",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

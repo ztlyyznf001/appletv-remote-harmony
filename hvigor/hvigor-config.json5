@@ -1,0 +1,9 @@
+{
+  // Use the Hvigor shipped by the matching DevEco/Command Line Tools installation.
+  // Official DevEco 26.0.0.821 compatibility table: Hvigor 6.26.4.
+  "modelVersion": "26.0.0",
+  "dependencies": {},
+  "execution": {},
+  "logging": {},
+  "debugging": {}
+}

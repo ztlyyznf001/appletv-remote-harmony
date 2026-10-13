@@ -1,0 +1,49 @@
+Command: ./harmony/entry/tests/run-mocks.sh
+
+PASS manual endpoint requires explicit port and numeric unicast IPv4
+PASS manual IPv6 accepts compression and numeric scope, rejects unsafe/malformed inputs
+(node:8) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS duplicate connect is guarded; unpaired native begin does not mean connected
+PASS late begin completion after background cannot show PIN
+PASS connected only after native verified session startup
+PASS pairing cancellation never saves late identity
+PASS save cancelled in background cannot connect
+PASS PIN must be exactly four digits
+PASS two reconnect attempts per foreground, each delayed 3000ms
+PASS reconnect refreshes same service endpoint but keeps credential identity
+PASS identity/auth/protocol failures do not retry or pair
+PASS explicit disconnect suppresses reconnect across foreground cycles
+PASS background cancels pending reconnect
+PASS duplicate buttons suppressed and failed button never replayed
+PASS forget confirmation is bound to selected device
+PASS mDNS discoveryStart success code zero does not stop discovery
+PASS mDNS discoveryStart failure stops cleanly
+PASS mDNS resolves actual dynamic port and deduplicates found events
+PASS stale mDNS resolves cannot populate or drain new generation
+PASS lost service resolve ignored and stop removes listeners/timer
+PASS invalid resolved address/port never becomes selectable
+21 mock logic checks passed. NOT HarmonyOS SDK/ArkTS compilation or device validation.
+PASS AES-GCM roundtrip and plaintext ownership/wiping
+PASS fresh random nonce each save
+PASS absent returns undefined
+PASS cancel before encryption avoids writes
+(node:16) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS cancel during encryption avoids stale save
+PASS cancel during flush rolls back cache and disk
+PASS cancel first save during flush removes candidate
+PASS flush failure restores old committed envelope
+PASS wrong target rejects authenticated identity
+PASS tampered tag rejects and releases session
+PASS version, truncation and noncanonical base64 reject
+PASS remove commits and waits for prior save
+PASS missing key with existing storage refuses regeneration
+PASS unrelated key lookup error never becomes generation
+PASS bounds fail closed
+PASS crypto failure uses fixed error and wipes input copy
+PASS rollback failure disables all instances
+PASS explicit Forget removes corrupt non-string preferences
+PASS explicit Forget removes oversized envelope
+PASS failed Forget flush fails closed with uncertain disk state
+20 mock logic checks passed. This is NOT HarmonyOS SDK/ArkTS compilation or device validation.

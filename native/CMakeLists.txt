@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.16)
+project(companion_host_validation LANGUAGES CXX)
+
+# This file is for host verification only. Harmony builds enter through
+# entry/src/main/cpp/CMakeLists.txt with an explicit target OpenSSL prefix.
+if(CMAKE_CROSSCOMPILING OR CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+  message(FATAL_ERROR "Use entry/src/main/cpp/CMakeLists.txt for Harmony builds")
+endif()
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+find_package(Threads REQUIRED)
+add_library(companion_core STATIC src/crypto.cpp src/codec.cpp src/session.cpp)
+target_include_directories(companion_core PUBLIC include)
+target_link_libraries(companion_core PUBLIC OpenSSL::Crypto Threads::Threads)
+target_compile_options(companion_core PRIVATE -Wall -Wextra -Wpedantic)
+enable_testing()
+foreach(test crypto_codec_test session_test)
+  add_executable(${test} tests/${test}.cpp)
+  target_link_libraries(${test} PRIVATE companion_core)
+  add_test(NAME ${test} COMMAND ${test})
+endforeach()

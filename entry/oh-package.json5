@@ -1,0 +1,4 @@
+{
+  "name": "entry", "version": "0.1.0", "description": "Native ArkUI entry",
+  "dependencies": { "libcompanion.so": "file:./src/main/cpp/types/libcompanion" }
+}

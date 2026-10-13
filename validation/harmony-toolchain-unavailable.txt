@@ -1,0 +1,11 @@
+Read-only toolchain preflight; expected status 2 when unavailable.
+hvigorw: not on PATH (DevEco bundled tool paths may need configuration)
+ohpm: not on PATH (DevEco bundled tool paths may need configuration)
+hdc: not on PATH (DevEco bundled tool paths may need configuration)
+Harmony NDK: set OHOS_NATIVE_HOME to the official SDK native directory.
+OpenSSL: set COMPANION_HARMONY_OPENSSL_ROOT to the Harmony arm64 target prefix.
+
+NOT READY: see docs/DEPLOYMENT.zh-CN.md. Host tests remain available.
+
+Exit status: 2
+CMake path: not installed

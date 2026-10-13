@@ -1,0 +1,12 @@
+Command: NODE_HEADERS=<official Node v24.19.0 source/src> ./harmony/scripts/test-node-bridge.sh
+
+PASS bridge: expected exports
+PASS bridge: invalid port
+PASS bridge: invalid credentials
+PASS bridge: invalid PIN
+PASS bridge: press requires verified session
+PASS bridge: async I/O leaves event loop free; cancel wakes blocked read
+PASS bridge: cancel invalidates queued work
+PASS bridge: disconnect is idempotent
+PASS: host Node-API smoke checks; Harmony bridge remains uncompiled.
+PASS host Worker teardown bounded: 10014 ms. Earlier teardown is allowed; immediate cancellation is NOT guaranteed without cancel().

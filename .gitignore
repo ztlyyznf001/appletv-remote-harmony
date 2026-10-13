@@ -1,0 +1,16 @@
+build/
+.hvigor/
+oh_modules/
+local.properties
+**/build/
+**/.cxx/
+**/oh_modules/
+*.p12
+*.p7b
+*.cer
+*.csr
+*.jks
+*.keystore
+*.hap
+*.app
+third_party/openssl/

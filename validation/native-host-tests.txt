@@ -1,0 +1,21 @@
+Final source validation, UTC 2026-10-12
+Command: ./harmony/scripts/test-host.sh
+
+c++ (Debian 14.2.0-19) 14.2.0
+OpenSSL (host pkg-config): 3.5.7
+crypto_codec_test: all known vectors, bounds, and rejection cases passed
+PASS pair, verify, handshake, all buttons, NoOp and XID interleaving
+PASS strict credential serialization
+PASS reject forged SRP proof
+PASS reject wrong identity, forged signature and verify AEAD tag
+PASS reject frame tag/header tampering and malformed frames
+PASS total deadline during frame flood and partial header
+PASS shutdown cancellation and stale epoch
+PASS best-effort button release after failure
+PASS pipelined release, reordered acknowledgements and cancel
+PASS stale epochs preserve a newly connected session
+PASS concurrent cancel preserves immediately started fresh-epoch work
+PASS numeric IPv4/IPv6 and dynamic ports
+12 native session tests passed
+
+PASS: host C++ tests. Harmony/ArkTS/HAP and Apple TV hardware were NOT tested by this command.

@@ -1,0 +1,8 @@
+Command: python3 harmony/scripts/check-source.py
+
+PASS source checks: 13 JSON/JSON5 files, SVG XML, source paths, INTERNET-only permissions, MIT metadata, exact bundled licenses, whitespace.
+NOT Harmony SDK schema validation, ArkTS compilation, CMake execution, or HAP packaging.
+
+Command: bash -n harmony/scripts/*.sh harmony/entry/tests/run-mocks.sh
+
+Command: git diff --cached --check
