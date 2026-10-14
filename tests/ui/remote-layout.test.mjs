@@ -41,9 +41,11 @@ const prefix = page.slice(page.indexOf('struct Index {'), page.indexOf('  @Build
   .replace('struct Index', 'class Index').replaceAll('@State ', '');
 const pageClass = stripTypeScriptTypes(`${prefix}\n}\nglobalThis.TestIndex = Index;`);
 const calls = [];
-const state = { foreground: true, connected: true, busy: false, buttonInFlight: false, ready: true, needsPin: false, selected: undefined };
+let touchCancels = 0;
+const state = { foreground: true, connected: true, busy: false, buttonInFlight: false, touchInFlight: false, ready: true, needsPin: false, selected: undefined };
 const controller = {
  state,
+ cancelTouch() { touchCancels++; },
  disconnect() { calls.push('disconnect'); state.connected = false; state.needsPin = false; },
  select(device) { calls.push(`select:${device.id}`); state.selected = device; },
  connectSelected() { calls.push('connect'); state.busy = true; }
@@ -83,5 +85,25 @@ check('overlay is hidden while backgrounded and background controls are isolated
  state.foreground = false; assert.equal(view.modalOpen(), false); state.foreground = true; assert.equal(view.modalOpen(), true);
  assert.ok(page.includes('.enabled(!this.modalOpen())'));
  assert.ok(page.includes(".accessibilityLevel(this.modalOpen() ? 'no-hide-descendants' : 'auto')"));
+});
+
+check('touch contact locks buttons but keeps the active pad enabled', () => {
+ state.connected = true; state.foreground = true; state.busy = false; view.panel = ''; state.touchInFlight = true;
+ assert.equal(view.controlsEnabled(), false); assert.equal(view.touchEnabled(), true);
+ state.touchInFlight = false;
+});
+check('mode changes cancel exactly once and expose real touch callbacks', () => {
+ const before = touchCancels; view.setTouchMode(false); view.setTouchMode(false);
+ assert.equal(touchCancels, before + 1); assert.equal(view.touchMode, false);
+ view.setTouchMode(true); assert.equal(touchCancels, before + 2);
+ for (const method of ['beginTouch','moveTouch','endTouch','holdTouch','cancelTouch']) assert.ok(page.includes('remoteController.' + method));
+});
+check('opening any panel cancels the contact and disables its pad', () => {
+ const before=touchCancels; view.setPanel('options'); assert.equal(touchCancels,before+1); assert.equal(view.touchEnabled(),false);
+ view.closePanel(); assert.equal(view.touchEnabled(),true);
+});
+check('page removal cancels touch and pad-scroll arbitration is wired', () => {
+ const before=touchCancels;view.aboutToDisappear();assert.equal(touchCancels,before+1);
+ assert.ok(page.includes('this.state.touchInFlight ? GestureJudgeResult.REJECT : GestureJudgeResult.CONTINUE'));
 });
 console.log(`${count} total layout and UI-handler checks passed (not ArkUI rendering).`);

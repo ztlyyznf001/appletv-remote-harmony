@@ -1,45 +1,6 @@
-// Node >=24 logic-only checks. These do NOT compile ArkTS or validate HarmonyOS APIs.
-import fs from 'node:fs';
+// Logic-only checks of actual ArkTS sources, not HarmonyOS compilation.
 import assert from 'node:assert/strict';
-import { stripTypeScriptTypes } from 'node:module';
-const ets = (relative) => stripTypeScriptTypes(fs.readFileSync(new URL('../src/main/ets/' + relative, import.meta.url), 'utf8').replace(/^import .*;\n/gm, '').replace(/^@Observed\n/gm, '').replace(/export default class /g, 'class ').replace(/export /g, ''));
-const Device = new Function(ets('model/Device.ets') + '; return Device;')();
-const manual = new Function(ets('model/Device.ets') + '; return manualEndpoint;')();
-const RemoteState = new Function(ets('model/RemoteState.ets') + '; return RemoteState;')();
-const controllerJS = ets('model/RemoteController.ets') + '; return RemoteController;';
-const discoveryJS = ets('discovery/DeviceDiscovery.ets') + '; return DeviceDiscovery;';
-const deferred = () => { let resolve; let reject; const promise = new Promise((r,j)=>{resolve=r;reject=j;}); return {promise,resolve,reject}; };
-const tick = () => new Promise(r=>setImmediate(r));
-const codeError = code => Object.assign(new Error('DO NOT DISPLAY PEER DATA'), {code});
-function fixture({saved=false,resume=false}={}) {
-  const target = new Device('mdns:TV', 'TV', '192.168.1.2', 12345);
-  const data = new Map(saved ? [['last_id',target.id],['last_name',target.name],['last_host',target.host],['last_port',target.port],['resume_connection',resume]] : []);
-  const identity = new Uint8Array([1,2,3,4]);
-  const stored = new Map(saved ? [[target.id,identity]] : []);
-  const timers = new Map(); let timerId=0;
-  const endpoints = [];
-  const calls = {begin:0,finish:0,connect:0,press:0,cancel:0,disconnect:0,save:0,start:0,stop:0};
-  const gates = {begin:undefined,finish:undefined,connect:undefined,press:undefined,save:undefined};
-  let failure='';
-  const native = {
-    async beginPairing(){calls.begin++;if(gates.begin)await gates.begin.promise;},
-    async finishPairing(){calls.finish++;if(gates.finish)await gates.finish.promise;return identity.slice().buffer;},
-    async connect(h,p,buf){calls.connect++;endpoints.push({host:h,port:p});assert.ok(new Uint8Array(buf).some(x=>x!==0));if(gates.connect)await gates.connect.promise;if(failure)throw codeError(failure);},
-    async press(){calls.press++;if(gates.press)await gates.press.promise;if(failure)throw codeError(failure);},
-    cancel(){calls.cancel++;},async disconnect(){calls.disconnect++;}
-  };
-  class Store {
-    async initialize(){} contains(id){return stored.has(id);}
-    async load(id){return stored.get(id)?.slice().buffer;}
-    async save(id,buf,current){calls.save++;if(gates.save)await gates.save.promise;if(!current())return false;stored.set(id,new Uint8Array(buf).slice());return true;}
-    async remove(id){stored.delete(id);}
-  }
-  class Discovery {start(){calls.start++;}stop(){calls.stop++;}}
-  const prefs={getSync(k,d){return data.has(k)?data.get(k):d;},putSync(k,v){data.set(k,v);},deleteSync(k){data.delete(k);},async flush(){}};
-  const Controller=new Function('preferences','companion','RemoteState','CredentialStore','DeviceDiscovery','Device','manualEndpoint','setTimeout','clearTimeout',controllerJS)({getPreferencesSync(){return prefs;}},native,RemoteState,Store,Discovery,Device,manual,(fn,delay)=>{timers.set(++timerId,{fn,delay});return timerId;},id=>timers.delete(id));
-  const controller=new Controller();
-  return {controller,target,data,stored,timers,calls,gates,identity,endpoints,setFailure(x){failure=x;},async start(){await controller.initialize({});controller.enterForeground();},async fire(){const [id,t]=timers.entries().next().value;timers.delete(id);assert.equal(t.delay,3000);t.fn();await tick();}};
-}
+import { Device, manual, discoveryJS, deferred, tick, fixture } from './test-fixtures.mjs';
 let count=0;
 async function check(name, fn){await fn();count++;console.log('PASS '+name);}
 await check('manual endpoint requires explicit port and numeric unicast IPv4',()=>{

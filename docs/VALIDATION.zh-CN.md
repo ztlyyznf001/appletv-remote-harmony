@@ -115,3 +115,16 @@ NODE_HEADERS="/实际/node-v24.19.0/src" ./scripts/test-node-bridge.sh
 - 真机曾在页面加载前设置窗口背景时抛出 `1300002` 并退出。现改为 `loadContent` 成功回调后设置外观，同时捕获窗口异常和系统栏 Promise 拒绝。
 - 修复包已覆盖安装，用户确认正常启动且上下白边消失；该次启动日志未再出现上述 RuntimeError。未据此扩大声明 Apple TV 协议或全部屏幕形态已验证。
 - 提交不包含签名配置、证书、私钥、设备标识、日志或 HAP。
+
+## 2026-10-13 UTC 触摸板补齐（上游合并之后）
+
+基于上游 `b8e94dae6c062cb06c9de0d80c75c2b2f0aec701`。前一节使用用户本地日期记录；本节使用 UTC，不代表回退该节修复。完整协议、取消边界及验收步骤见 [触摸板补齐](TOUCHPAD.zh-CN.md)。
+
+- 107 项实际 ArkTS 非 UI / 组件处理器主机检查通过：21 生命周期 / 发现、25 新增输入泵 / 控制器、20 凭据存储、21 布局 / 页面、20 指针 / 组件。包含 20,000 次移动的固定队列上界、BEGIN / END 顺序、长按相对计时、同帧历史轨迹、防重复轻点、取消 / 重连竞争及旧计时器失效。
+- 原生密码 / 编解码测试与 20 组会话检查通过。新会话检查使用真实 Pair Verify、加密帧与本机假电视，核对 `_touchStart` double 坐标域、`_hidT` 事件字段 / 顺序 / 单调时间、held SELECT、清理、拒绝 / 部分回复 / 超时和取消 / 重连；并非真实 Apple TV。
+- 相同密码 / 编解码与 20 组会话测试在 ASan + UBSan 下通过，`ASAN_OPTIONS=detect_leaks=0`；LeakSanitizer 受容器 ptrace 限制，未完成泄漏检测验收。
+- Node-API 桥接在 Node 24.19.0 官方头文件下编译，输入合法性、边界坐标、64 项上界、混合操作 FIFO、取消及 worker teardown 检查通过。头文件只放在忽略的构建目录，不随提交交付；此结果不替代 Harmony Node-API ABI 检查。
+- JSON / JSON5、SVG、INTERNET-only 权限、许可镜像、源码与空白检查通过。
+- 独立代码审查发现并修复同帧来回轨迹可能误判轻点的问题，并新增回归测试。
+
+本次 `check-toolchain.sh` 返回 NOT READY：没有 Hvigor、OHPM、HDC 或目标 Harmony SDK / 依赖配置。新增 ArkTS / ArkUI 和原生桥接尚未进行目标 SDK 编译、HAP 打包、安装、视觉或 tvOS 联调。保留已由用户验证的上游启动 / SDK 兼容性修复，但不扩大此前验收范围。

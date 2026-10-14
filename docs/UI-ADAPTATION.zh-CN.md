@@ -2,6 +2,8 @@
 
 日期：2026-10-13 UTC。
 
+本文记录最初只含方向键的 UI 适配。后续基于已合并并完成本地启动修复的上游补齐触摸板，见[触摸板补齐与验收](TOUCHPAD.zh-CN.md)；下文“没有触摸板”的描述仅对应最初适配。
+
 ## 源码与范围
 
 - 鸿蒙基线：[`285a7005b7519ba94687369fe7b428d5e41e5c09`](https://github.com/ztlyyznf001/appletv-remote-harmony/commit/285a7005b7519ba94687369fe7b428d5e41e5c09)。开始工作时重新查询 GitHub，并将本地 69 个源码文件逐一按 Git blob SHA-1 与该树核对，全部一致。

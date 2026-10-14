@@ -134,6 +134,10 @@ public:
     std::uint64_t write_counter = 0, read_counter = 0, xid = 1;
     bool connected = false, usable = false;
     std::uint32_t held_button = 0;
+    bool select_held = false, touch_active = false;
+    std::uint32_t touch_x = 0, touch_y = 0;
+    Deadline touch_epoch{};
+    std::uint64_t touch_ns = 0;
 
     void check(Epoch epoch) const { require(generation.load(std::memory_order_acquire) == epoch, "Operation cancelled"); }
     void cancel() noexcept {
@@ -161,6 +165,8 @@ public:
     }
     void reset_fields() noexcept {
         connected = false; usable = false; held_button = 0;
+        select_held = false; touch_active = false; touch_x = 0; touch_y = 0;
+        touch_epoch = {}; touch_ns = 0;
         wipe(write_key); wipe(read_key); wipe(salt); wipe(server_public);
         write_counter = 0; read_counter = 0; xid = 1;
     }
@@ -329,6 +335,15 @@ public:
             reject_error(response.second, "Apple TV rejected command"); return response.second;
         }
     }
+    void touch_event(std::uint32_t x, std::uint32_t y, std::uint32_t phase, Deadline end, Epoch epoch) {
+        // steady_clock keeps _ns monotonic even if the wall clock changes. Match
+        // Companion's nanoseconds-since-touch-negotiation epoch, not Unix time.
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - touch_epoch).count();
+        touch_ns = std::max(touch_ns, static_cast<std::uint64_t>(std::max<std::int64_t>(0, elapsed)));
+        send(8, {{"_i", "_hidT"}, {"_t", std::uint64_t(1)}, {"_x", next_xid()},
+            {"_c", Dict{{"_ns", touch_ns}, {"_tFg", std::uint64_t(1)}, {"_cx", std::uint64_t(x)},
+                {"_cy", std::uint64_t(y)}, {"_tPh", std::uint64_t(phase)}}}}, end, epoch);
+    }
     void tap(std::uint32_t button, Epoch epoch) {
         auto down_id = next_xid(), up_id = next_xid();
         auto end = Clock::now() + timeout;
@@ -357,13 +372,20 @@ public:
         }
     }
     void release(Epoch epoch) noexcept {
-        if (!held_button || !usable || write_key.empty()) return;
-        auto button = held_button; held_button = 0;
+        auto button = held_button;
+        bool select = select_held, touch = touch_active;
+        held_button = 0; select_held = false; touch_active = false;
+        if (!usable || write_key.empty()) return;
         // Only send: a failed earlier response may leave inbound framing incomplete.
-        // Bound cleanup to 200 ms and do not claim release was acknowledged.
+        // Bound all cleanup to one 200 ms budget. A dead/cancelled transport cannot
+        // guarantee release; always close it rather than replay on a new session.
+        auto end = Clock::now() + std::chrono::milliseconds(200);
         try {
-            send(8, {{"_i", "_hidC"}, {"_t", std::uint64_t(2)}, {"_x", next_xid()},
-                {"_c", Dict{{"_hBtS", std::uint64_t(2)}, {"_hidC", std::uint64_t(button)}}}}, Clock::now() + std::chrono::milliseconds(200), epoch);
+            for (auto code : {button, select ? std::uint32_t(6) : std::uint32_t(0)}) {
+                if (code) send(8, {{"_i", "_hidC"}, {"_t", std::uint64_t(2)}, {"_x", next_xid()},
+                    {"_c", Dict{{"_hBtS", std::uint64_t(2)}, {"_hidC", std::uint64_t(code)}}}}, end, epoch);
+            }
+            if (touch) touch_event(touch_x, touch_y, 4, end, epoch);
         } catch (...) { }
     }
 };
@@ -429,6 +451,8 @@ void Session::connect(const std::string& host, std::uint16_t port, const Credent
             {"_i", std::string(credentials.client_id.begin(), credentials.client_id.end())}, {"_idsID", credentials.client_id},
             {"_pubID", public_id(credentials.client_id)}, {"_sf", std::uint64_t(256)}, {"_sv", "170.18"},
             {"model", "HarmonyOS"}, {"name", "Harmony Remote"}}, epoch);
+        p.touch_epoch = Clock::now();
+        p.command("_touchStart", {{"_height", 1000.0}, {"_width", 1000.0}, {"_tFl", std::uint64_t(0)}}, epoch);
         auto random = random_bytes(4); std::uint64_t sid = 0; for (auto b : random) sid = (sid << 8) | b;
         auto response = p.command("_sessionStart", {{"_srvT", "com.apple.tvremoteservices"}, {"_sid", sid}}, epoch);
         auto content = lookup(response, "_c"); require(content, "Apple TV did not open a remote session");
@@ -440,10 +464,35 @@ void Session::connect(const std::string& host, std::uint16_t port, const Credent
 void Session::press(std::uint32_t button, Epoch epoch) {
     auto& p = *impl_;
     Impl::OperationGuard operation(p, epoch);
+    require((button >= 1 && button <= 7) || button == 14, "Unsupported remote button");
+    require(button != 6 || !p.select_held, "Select is already held");
     try {
         p.check(epoch); require(p.connected, "Connect to Apple TV first");
-        require((button >= 1 && button <= 7) || button == 14, "Unsupported remote button");
         p.tap(button, epoch); p.check(epoch);
+    } catch (...) { p.release(epoch); p.reset(); throw; }
+}
+void Session::touch(std::uint32_t x, std::uint32_t y, std::uint32_t phase, Epoch epoch) {
+    auto& p = *impl_;
+    Impl::OperationGuard operation(p, epoch);
+    require(x <= 1000 && y <= 1000 && (phase == 1 || phase == 3 || phase == 4), "Invalid touch input");
+    require(p.connected, "Connect to Apple TV first");
+    require(phase == 1 ? !p.touch_active : p.touch_active, "Invalid touch sequence");
+    try {
+        p.touch_event(x, y, phase, Clock::now() + p.timeout, epoch);
+        p.touch_x = x; p.touch_y = y; p.touch_active = phase != 4; p.check(epoch);
+    } catch (...) { p.release(epoch); p.reset(); throw; }
+}
+void Session::hold_select(bool held, Epoch epoch) {
+    auto& p = *impl_;
+    Impl::OperationGuard operation(p, epoch);
+    require(p.connected, "Connect to Apple TV first");
+    if (p.select_held == held) return;
+    try {
+        // Track a down before waiting for its acknowledgement. A rejected or
+        // truncated reply must still attempt an up before closing the session.
+        if (held) p.select_held = true;
+        p.command("_hidC", {{"_hBtS", std::uint64_t(held ? 1 : 2)}, {"_hidC", std::uint64_t(6)}}, epoch);
+        p.select_held = held; p.check(epoch);
     } catch (...) { p.release(epoch); p.reset(); throw; }
 }
 void Session::disconnect(Epoch epoch) {

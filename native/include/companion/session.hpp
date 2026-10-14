@@ -43,6 +43,13 @@ public:
     Credentials finish_pairing(const std::string& pin, Epoch);
     void connect(const std::string& numeric_host, std::uint16_t port, const Credentials&, Epoch);
     void press(std::uint32_t button, Epoch);
+    // Fire-and-forget encrypted events on the negotiated 1000 x 1000 surface.
+    // Phases: BEGIN=1, MOVE=3, END=4. Requires one BEGIN before MOVE/END.
+    void touch(std::uint32_t x, std::uint32_t y, std::uint32_t phase, Epoch);
+    // Idempotent SELECT down/up commands, serialized with touch and button work.
+    void hold_select(bool held, Epoch);
+    // Best-effort input release (bounded to 200 ms) before closing the socket.
+    // cancel() instead closes immediately; delivery cannot be guaranteed on loss.
     void disconnect(Epoch);
 private:
     class Impl;
